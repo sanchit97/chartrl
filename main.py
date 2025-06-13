@@ -1,174 +1,193 @@
 import os
 import tqdm
 import re
+import time
+import pickle
+
 
 import torch
-
-
+from transformers import BitsAndBytesConfig
+from transformers import AutoModel, AutoProcessor, AutoTokenizer
+from peft import LoraConfig, get_peft_model, PeftModel
+from trl import SFTConfig, SFTTrainer
 from qwen_vl_utils import process_vision_info
 
+import wandb
 from models import load_vlm_model
-from dataset_process import load_chart_dataset
+from dataset_process import ChartDataset
 
 
-def get_prompt_temp(q):
-    prefix = "Look at the chart. %s Answer with a single phrase only."%q
-    return prefix
+from metrics import exact_match, relaxed_accuracy
+from utils import get_vlm_output, clear_memory, format_data
 
-def normalize_answer(ans):
-    ans = str(ans)
-    # Keep only alphanumerics and spaces
-    ans = re.sub(r'[^A-Za-z0-9 .]+', '', ans)
-    return ans.strip().lower()
+import logging, os
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s | %(levelname)s | %(name)s | %(message)s"
+)
 
-
-def get_vlm_output(model, processor, image, query):
-    if "llava" in model.__class__.__name__.lower():
-        messages = [
-            {
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": get_prompt_temp(query[0])},
-                    {"type": "image"},
-                ]
-            },
-        ]
-        prompt = processor.apply_chat_template(messages, add_generation_prompt=True)
-        inputs = processor(images=image[0], text=prompt, return_tensors="pt").to(model.device)
-        output = model.generate(**inputs, max_new_tokens=100)
-        out_text = processor.decode(output[0], skip_special_tokens=True)
-        out_text = out_text.split("[/INST]")[-1].strip()
-
-
-    elif "qwen" in model.__class__.__name__.lower():
-        messages = [
-            {
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": get_prompt_temp(query[0])},
-                    {
-                        "type": "image",
-                        "image": image[0],
-                    },
-                ],
-            }
-        ]
-
-        # Preparation for inference
-        text = processor.apply_chat_template(
-            messages, tokenize=False, add_generation_prompt=True
-        )
-        image_inputs, video_inputs = process_vision_info(messages)
-        inputs = processor(
-            text=[text],
-            images=image_inputs,
-            videos=video_inputs,
-            padding=True,
-            return_tensors="pt",
-        )
-        inputs = inputs.to(model.device)
-
-        # Inference: Generation of the output
-        generated_ids = model.generate(**inputs, max_new_tokens=100)
-        generated_ids_trimmed = [
-            out_ids[len(in_ids) :] for in_ids, out_ids in zip(inputs.input_ids, generated_ids)
-        ]
-        output_text = processor.batch_decode(
-            generated_ids_trimmed, skip_special_tokens=True, clean_up_tokenization_spaces=False
-        )
-
-        out_text = output_text[0]
-    
-
-    elif "internvl" in model.__class__.__name__.lower():
-        from internvl_utils import build_transform, find_closest_aspect_ratio, dynamic_preprocess, load_image, get_conv_template
-        generation_config = {"num_beams":1,"max_new_tokens":100}
-        question =  "<image> "+ get_prompt_temp(query[0])
-        pixel_values = load_image(image[0])
-        history=None 
-        return_history=False
-        num_patches_list=None 
-        IMG_START_TOKEN='<img>' 
-        IMG_END_TOKEN='</img>'
-        IMG_CONTEXT_TOKEN='<IMG_CONTEXT>'
-
-        if history is None and pixel_values is not None and '<image>' not in question:
-            question = '<image>\n' + question
-
-        if num_patches_list is None:
-            num_patches_list = [pixel_values.shape[0]] if pixel_values is not None else []
-        assert pixel_values is None or len(pixel_values) == sum(num_patches_list)
-
-        img_context_token_id = processor.convert_tokens_to_ids(IMG_CONTEXT_TOKEN)
-        model.img_context_token_id = img_context_token_id
-
-
-        template = get_conv_template(model.template)
-        template.system_message = model.system_message
-        eos_token_id = processor.convert_tokens_to_ids(template.sep.strip())
-
-        history = [] if history is None else history
-        for (old_question, old_answer) in history:
-            template.append_message(template.roles[0], old_question)
-            template.append_message(template.roles[1], old_answer)
-        template.append_message(template.roles[0], question)
-        template.append_message(template.roles[1], None)
-        query = template.get_prompt()
-
-
-        for num_patches in num_patches_list:
-            image_tokens = IMG_START_TOKEN + IMG_CONTEXT_TOKEN * model.num_image_token * num_patches + IMG_END_TOKEN
-            query = query.replace('<image>', image_tokens, 1)
-
-        model_inputs = processor(query, return_tensors='pt')
-        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-        input_ids = model_inputs['input_ids'].to(device)
-        attention_mask = model_inputs['attention_mask'].to(device)
-        generation_config['eos_token_id'] = eos_token_id
-
-        
-        outputs = model.generate(
-            pixel_values=pixel_values,
-            input_ids=input_ids,
-            attention_mask=attention_mask,
-            **generation_config
-        )
-
-        out_text = processor.batch_decode(
-            outputs, skip_special_tokens=True, clean_up_tokenization_spaces=False
-        )
-
-    return normalize_answer(out_text)
-
-
-def exact_match(pred, label):
-    if pred.lower() == label.lower():
-        return 1
-    return 0
 
 def main():
-    # model, processor = load_vlm_model("llava-1.6")
-    # model, processor = load_vlm_model("qwen-7b")
-    model, processor = load_vlm_model("internvl-8b")
-    loader = load_chart_dataset("chartqa")
+    mode = "sft"  # Change to "sft" for supervised fine-tuning
+    # Parse command line arguments
+    # args = parse_args()
+    
+    # Load the model and processor
+    if mode == "eval":
+        # model, processor = load_vlm_model("llava-1.6")
+        # model, processor = load_vlm_model("unichart-chartqa")
+        model, processor = load_vlm_model("qwen-7b")
+        # adapter_path = "llava-1.6-train-chartqa"
+        adapter_path = "qwen-7b-train-chartqa-v2"
+        model = PeftModel.from_pretrained(model, adapter_path)
+        model = model.merge_and_unload() 
+        # model, processor = load_vlm_model("internvl-8b")
+        dataset = ChartDataset("chartqa", processor=processor)
+        test_dataset = dataset.load_chart_dataset(split = "test")
+        # test_dataset = dataset.load_chart_dataset(split = "train")
+        em_correct, ra_correct, total = 0, 0, 0
 
-    em_correct, total = 0, 0
+        pref_data = []
 
-    for batch in tqdm.tqdm(loader):
-        pred = get_vlm_output(model, processor, batch[0], batch[1])
-        print(pred, batch[2][0][0])
+        for batch in tqdm.tqdm(test_dataset):
+            pred = get_vlm_output(model, processor, [batch['image']], [batch['query']])
+            print(pred, batch['label'][0])
 
-        # Exact match
-        em_correct += exact_match(pred, batch[2][0][0])
-        #ROUGE-L
-        #F1
-        #BLEU
+            # Exact match
+            em_correct += exact_match(pred, batch['label'][0])
+            # Realaxed accuracy
+            ra_correct += relaxed_accuracy([pred],batch['label'])[0]
+            if relaxed_accuracy([pred],batch['label'])[0] == 0:
+                pref_data.append([batch, pred])
+            print(len(pref_data))
+                
+            #ROUGE-L
+            #F1
+            #BLEU
 
-        total+=1
+            total+=1
 
-        print("Correct: ",em_correct/total)
+            print("EM: ",em_correct/total)
+            print("Relaxed Accuracy: ",ra_correct/total)
 
-        print()
+        # with open('./pref-data/base-llava-1.6', 'wb') as f:
+        #     pickle.dump(pref_data, f)
+
+
+    if mode == "sft":
+        os.environ["WANDB_CONSOLE"] = "wrap" 
+        wandb.init(project="chartrl", entity="sanchit97")
+        # Load the dataset and model for SFT
+        # model_name = "llava-1.6"  # Change to the desired model name
+        model_name = "qwen-7b"
+        # model_name = "internvl-8b"
+        model, processor = load_vlm_model(model_name)
+        dataset = ChartDataset("chartqa", processor=processor)
+        train_dataset = dataset.load_chart_dataset(split = "train")
+        eval_dataset = dataset.load_chart_dataset(split = "val")
+        # train_dataset = [format_data(sample) for sample in train_dataset]
+        # eval_dataset = [format_data(sample) for sample in eval_dataset]
+
+        logging.info("Loaded model, train and eval datasets")
+        logging.info("Using:", model.config._attn_implementation)
+
+        bnb_config = BitsAndBytesConfig(
+                    load_in_4bit=True, 
+                    bnb_4bit_use_double_quant=True, 
+                    bnb_4bit_quant_type="nf4", 
+                    bnb_4bit_compute_dtype=torch.bfloat16)
+                    
+        peft_config = LoraConfig(
+                    lora_alpha=16,
+                    lora_dropout=0.05,
+                    r=8,
+                    bias="none",
+                    target_modules=["q_proj", "v_proj"],
+                    # target_modules = ["wqkv", "wo"],
+                    task_type="CAUSAL_LM",)
+
+
+        peft_model = get_peft_model(model, peft_config)
+        print(peft_model.print_trainable_parameters())
+
+        logging.info("Loaded model+LORA adapters")
+
+        training_args = SFTConfig(
+            output_dir=model_name+"-train-chartqa-v3",  # Directory to save the model
+            num_train_epochs=3,  # Number of training epochs
+            per_device_train_batch_size=4,  # Batch size for training
+            per_device_eval_batch_size=4,  # Batch size for evaluation
+            gradient_accumulation_steps=4,  # Steps to accumulate gradients
+            gradient_checkpointing=True,  # Enable gradient checkpointing for memory efficiency
+            # Optimizer and scheduler settings
+            optim="adamw_torch_fused",  # Optimizer type
+            learning_rate=2e-4,  # Learning rate for training
+            lr_scheduler_type="constant",  # Type of learning rate scheduler
+            # Logging and evaluation
+            logging_steps=50,  # Steps interval for logging
+            eval_steps=500,  # Steps interval for evaluation
+            eval_strategy="steps",  # Strategy for evaluation
+            save_strategy="steps",  # Strategy for saving the model
+            save_steps=500,  # Steps interval for saving
+            metric_for_best_model="eval_loss",  # Metric to evaluate the best model
+            greater_is_better=False,  # Whether higher metric values are better
+            load_best_model_at_end=True,  # Load the best model after training
+            # Mixed precision and gradient settings
+            bf16=True,  # Use bfloat16 precision
+            tf32=True,  # Use TensorFloat-32 precision
+            max_grad_norm=0.3,  # Maximum norm for gradient clipping
+            warmup_ratio=0.03,  # Ratio of total steps for warmup
+            # Hub and reporting
+            push_to_hub=False,  # Whether to push model to Hugging Face Hub
+            report_to="wandb" ,  # Reporting tool for tracking metrics
+            # Gradient checkpointing settings
+            gradient_checkpointing_kwargs={"use_reentrant": False},  # Options for gradient checkpointing
+            # Dataset configuration
+            dataset_text_field="",  # Text field in dataset
+            dataset_kwargs={"skip_prepare_dataset": True},  # Additional dataset options
+            # max_seq_length=1024  # Maximum sequence length for input
+        )
+
+        training_args.remove_unused_columns = False  # Keep unused columns in dataset
+        training_args.dataloader_num_workers = 4  # Number of workers for data loading
+
+        logging.info("Training arguments set up")
+
+        trainer = SFTTrainer(
+            model=peft_model,
+            args=training_args,
+            train_dataset=train_dataset,
+            eval_dataset=eval_dataset,
+            data_collator=dataset.train_collate_fn_chartqa,
+            peft_config=peft_config,
+            tokenizer=processor.tokenizer,
+        )
+
+        logging.info("SFT Trainer initialized")
+        trainer.train()
+        logging.info("Training completed, saving output model")
+        trainer.save_model(training_args.output_dir)
+        logging.info("Model saved to {}".format(training_args.output_dir))
+
+
+    if mode == "dpo":
+        os.environ["WANDB_CONSOLE"] = "wrap" 
+        wandb.init(project="chartrl", entity="sanchit97")
+        # Load the dataset and model for SFT
+        # model_name = "llava-1.6"  # Change to the desired model name
+        model_name = "qwen-7b"
+        model, processor = load_vlm_model(model_name)
+        dataset = ChartDataset("chartqa", processor=processor)
+        train_dataset = dataset.load_chart_dataset(split = "train")
+        eval_dataset = dataset.load_chart_dataset(split = "val")
+
+        pref_data = dataset.load_pref_data()
+        breakpoint()
+        # train_dataset = [format_data(sample) for sample in train_dataset]
+        # eval_dataset = [format_data(sample) for sample in eval_dataset]
+
+        logging.info("Loaded model, train and eval datasets")
+        logging.info("Using:", model.config._attn_implementation)
 
 main()
 

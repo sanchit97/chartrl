@@ -12,6 +12,8 @@ from transformers import LlavaForConditionalGeneration, LlavaNextProcessor, Llav
 from transformers import AutoModel, AutoProcessor, AutoTokenizer, AutoModelForImageTextToText, AutoModelForVisualQuestionAnswering,AutoModelForCausalLM, AutoModelForZeroShotObjectDetection
 from transformers import pipeline
 
+from transformers import DonutProcessor, VisionEncoderDecoderModel
+
 import argparse
 from tqdm import tqdm
 import os
@@ -61,10 +63,10 @@ def load_vlm_model(model_type):
     if model_type == "llava-1.6":
         model_name = "llava-hf/llava-v1.6-mistral-7b-hf"
         processor = LlavaNextProcessor.from_pretrained(model_name)
-        model = LlavaNextForConditionalGeneration.from_pretrained(model_name, device_map="auto",cache_dir = cache_dir)
+        model = LlavaNextForConditionalGeneration.from_pretrained(model_name, device_map="auto",cache_dir = cache_dir, attn_implementation = "flash_attention_2", torch_dtype=torch.bfloat16)
     if model_type == "qwen-7b":
-        processor = AutoProcessor.from_pretrained("Qwen/Qwen2.5-VL-7B-Instruct")
-        model = AutoModelForImageTextToText.from_pretrained("Qwen/Qwen2.5-VL-7B-Instruct", device_map="auto",cache_dir = cache_dir)
+        processor = AutoProcessor.from_pretrained("Qwen/Qwen2-VL-7B-Instruct")
+        model = AutoModelForImageTextToText.from_pretrained("Qwen/Qwen2-VL-7B-Instruct", device_map="auto",cache_dir = cache_dir, attn_implementation = "flash_attention_2", torch_dtype=torch.bfloat16)
     if model_type == "internvl-8b":
         processor = AutoTokenizer.from_pretrained("OpenGVLab/InternVL2_5-8B", device_map="auto",cache_dir = cache_dir, trust_remote_code=True)
         model = AutoModel.from_pretrained("OpenGVLab/InternVL2_5-8B", device_map="auto",cache_dir = cache_dir, trust_remote_code=True)
@@ -89,6 +91,13 @@ def load_vlm_model(model_type):
         processor = AutoProcessor.from_pretrained("OpenGVLab/InternVL2_5-26B", device_map="auto",cache_dir = cache_dir, trust_remote_code=True)
         model = AutoModel.from_pretrained("OpenGVLab/InternVL2_5-26B", device_map="auto",cache_dir = cache_dir, trust_remote_code=True)
     
+
+
+    # Chart specific models
+    if model_type == "unichart-chartqa":
+        model_name = "ahmed-masry/unichart-chartqa-960"
+        model = VisionEncoderDecoderModel.from_pretrained(model_name).cuda()
+        processor = DonutProcessor.from_pretrained(model_name)
     
 
     return model, processor
