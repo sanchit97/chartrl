@@ -1,11 +1,12 @@
 import os
-
 import torch
+from PIL import Image
 from torch.utils.data import DataLoader
 from torchvision.transforms.functional import pil_to_tensor, to_pil_image
 from torch.nn.parallel import DataParallel
 import torch.nn.functional as F
 import pickle
+from tqdm import tqdm
 
 from datasets import Dataset, load_dataset, load_from_disk
 from transformers import Blip2Processor, Blip2ForConditionalGeneration, InstructBlipProcessor, InstructBlipForConditionalGeneration
@@ -17,13 +18,17 @@ from qwen_vl_utils import process_vision_info
 
 from models import load_vlm_model
 
+import logging
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s | %(levelname)s | %(name)s | %(message)s"
+)
+
 # Caching
 cache_dir = '/mnt/data/sanchit/hf'
 os.environ['HF_HUB_CACHE'] = '/mnt/data/sanchit/hf'
 os.environ['TRANSFORMERS_CACHE']= '/mnt/data/sanchit/hf'
 os.environ['HF_HOME'] = '/mnt/data/sanchit/hf'
-
-
 
 
 class ChartDataset:
@@ -68,8 +73,8 @@ class ChartDataset:
         texts = [processor.apply_chat_template(self.format_question(example), tokenize=False) for example in examples]  # Prepare texts for processing
         # Process the images to extract inputs
         # just collect them into a list
-        # image_inputs = [process_vision_info(self.format_question(example))[0] for example in examples]
-        image_inputs = [[example['image']] for example in examples]
+        image_inputs = [process_vision_info(self.format_question(example))[0] for example in examples]
+        # image_inputs = [[example['image']] for example in examples]
 
         # Tokenize the texts and process the images
         batch = processor(
@@ -98,7 +103,6 @@ class ChartDataset:
 
         # logging.info("Time to process batch: ",time.time()   - st)  # Log the time taken for processing
         return batch  # Return the prepared batch
-
 
     def format_question(self, example):
         if "llava" in self.processor.__class__.__name__.lower():
@@ -145,7 +149,65 @@ class ChartDataset:
             },]
 
     def load_pref_data(self):
-        with open("./pref-data/base-qwen-7b", "rb") as f:
-            pref_data = pickle.load(f)
+        path = "./pref-data/base-llava-1.6-sft-hf-dset"
+        if os.path.exists(path):
+            pref_dataset = load_from_disk(path)
+    
+        else:
+            logging.info("Pref Dataset not found, loading from pickle file... (can take a while)")
+            with open("./pref-data/base-llava-1.6-sft", "rb") as f:
+                pref_data = pickle.load(f)
+
+            formatted_data = []
+            for row in tqdm(pref_data):
+                img = row[0]['image']
+                query = row[0]['query']
+                label = row[0]['label'][0]
+                human = row[0]['human_or_machine']
+                pred = row[1]
+                formatted_data.append({
+                    # "image": Image.open(img),
+                    "image": img,
+                    "question": query,
+                    "label": label,
+                    "human_or_machine": human,
+                    "predicted": pred
+                })
+            # Create Hugging Face Dataset
+            logging.info("Pref Data Processed")
+            dataset = Dataset.from_list(formatted_data)
+            pref_dataset = dataset.map(self.pref_format, num_proc=32)
+            pref_dataset.save_to_disk("./pref-data/base-llava-1.6-sft-hf-dset")
+            logging.info("Pref Dataset Created")
         
-        return pref_data
+        return pref_dataset
+
+    def pref_format(self, example):
+        # Prepare the input for the chat template
+        prompt = [
+            {
+                "role": "user",
+                "content": [{"type": "image"}, {"type": "text", "text": example["question"]}],
+            },
+        ]
+        chosen = [
+            {
+                "role": "assistant",
+                "content": [{"type": "text", "text": example["label"]}],
+            },
+        ]
+        rejected = [
+            {
+                "role": "assistant",
+                "content": [{"type": "text", "text": example["predicted"]}],
+            },
+        ]
+        # Apply the chat template
+        prompt = self.processor.apply_chat_template(prompt, tokenize=False)
+        chosen = self.processor.apply_chat_template(chosen, tokenize=False)
+        rejected = self.processor.apply_chat_template(rejected, tokenize=False)
+        # Resize the image to ensure it fits within the maximum allowable
+        # size of the processor to prevent OOM errors.
+        # max_size = self.processor.image_processor.size["longest_edge"]
+        # example["image"].thumbnail((max_size, max_size))
+        return {"images": [example["image"]], "prompt": prompt, "chosen": chosen, "rejected": rejected}

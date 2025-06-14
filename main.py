@@ -9,7 +9,7 @@ import torch
 from transformers import BitsAndBytesConfig
 from transformers import AutoModel, AutoProcessor, AutoTokenizer
 from peft import LoraConfig, get_peft_model, PeftModel
-from trl import SFTConfig, SFTTrainer
+from trl import SFTConfig, SFTTrainer, DPOConfig, DPOTrainer
 from qwen_vl_utils import process_vision_info
 
 import wandb
@@ -21,6 +21,11 @@ from metrics import exact_match, relaxed_accuracy
 from utils import get_vlm_output, clear_memory, format_data
 
 import logging, os
+
+
+# torch.seed_all(2025)
+
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s | %(levelname)s | %(name)s | %(message)s"
@@ -28,7 +33,7 @@ logging.basicConfig(
 
 
 def main():
-    mode = "sft"  # Change to "sft" for supervised fine-tuning
+    mode = "dpo"  # Change to "sft" for supervised fine-tuning
     # Parse command line arguments
     # args = parse_args()
     
@@ -38,9 +43,9 @@ def main():
         # model, processor = load_vlm_model("unichart-chartqa")
         model, processor = load_vlm_model("qwen-7b")
         # adapter_path = "llava-1.6-train-chartqa"
-        adapter_path = "qwen-7b-train-chartqa-v2"
-        model = PeftModel.from_pretrained(model, adapter_path)
-        model = model.merge_and_unload() 
+        # adapter_path = "qwen-7b-train-chartqa-dpo-v2/checkpoint-775"
+        # model = PeftModel.from_pretrained(model, adapter_path)
+        # model = model.merge_and_unload() 
         # model, processor = load_vlm_model("internvl-8b")
         dataset = ChartDataset("chartqa", processor=processor)
         test_dataset = dataset.load_chart_dataset(split = "test")
@@ -70,7 +75,7 @@ def main():
             print("EM: ",em_correct/total)
             print("Relaxed Accuracy: ",ra_correct/total)
 
-        # with open('./pref-data/base-llava-1.6', 'wb') as f:
+        # with open('./pref-data/base-llava-1.6-sft', 'wb') as f:
         #     pickle.dump(pref_data, f)
 
 
@@ -79,7 +84,7 @@ def main():
         wandb.init(project="chartrl", entity="sanchit97")
         # Load the dataset and model for SFT
         # model_name = "llava-1.6"  # Change to the desired model name
-        model_name = "qwen-7b"
+        # model_name = "qwen-7b"
         # model_name = "internvl-8b"
         model, processor = load_vlm_model(model_name)
         dataset = ChartDataset("chartqa", processor=processor)
@@ -172,22 +177,64 @@ def main():
 
     if mode == "dpo":
         os.environ["WANDB_CONSOLE"] = "wrap" 
-        wandb.init(project="chartrl", entity="sanchit97")
+        wandb.init(project="chartrl", entity="chartrl")
         # Load the dataset and model for SFT
-        # model_name = "llava-1.6"  # Change to the desired model name
-        model_name = "qwen-7b"
+        model_name = "llava-1.6"  # Change to the desired model name
+        # model_name = "qwen-7b"
         model, processor = load_vlm_model(model_name)
+        adapter_path = "llava-1.6-train-chartqa"
+        model = PeftModel.from_pretrained(model, adapter_path)
+        model = model.merge_and_unload() 
+        # breakpoint()
         dataset = ChartDataset("chartqa", processor=processor)
-        train_dataset = dataset.load_chart_dataset(split = "train")
+        pref_dataset = dataset.load_pref_data()
+        # pref_dataset = pref_dataset.map(dataset.pref_format, batched=True, batch_size=32, num_proc=4)
+        # train_dataset = dataset.load_chart_dataset(split = "train")
         eval_dataset = dataset.load_chart_dataset(split = "val")
+        logging.info("Loaded model, pref and eval datasets")
 
-        pref_data = dataset.load_pref_data()
-        breakpoint()
-        # train_dataset = [format_data(sample) for sample in train_dataset]
-        # eval_dataset = [format_data(sample) for sample in eval_dataset]
+        bnb_config = BitsAndBytesConfig(
+                    load_in_4bit=True, 
+                    bnb_4bit_use_double_quant=True, 
+                    bnb_4bit_quant_type="nf4", 
+                    bnb_4bit_compute_dtype=torch.bfloat16)
+                    
+        peft_config = LoraConfig(
+                    lora_alpha=16,
+                    lora_dropout=0.05,
+                    r=8,
+                    bias="none",
+                    target_modules=["q_proj", "v_proj"],
+                    # target_modules = ["wqkv", "wo"],
+                    task_type="CAUSAL_LM",)
 
-        logging.info("Loaded model, train and eval datasets")
-        logging.info("Using:", model.config._attn_implementation)
+
+        peft_model = get_peft_model(model, peft_config)
+        print(peft_model.print_trainable_parameters())
+
+        logging.info("Loaded model+LORA adapters")
+
+        training_args = DPOConfig(
+        output_dir=model_name+"-train-chartqa-dpo-sft-v1",  # Directory to save the model
+        bf16=True,
+        gradient_checkpointing=True,
+        per_device_train_batch_size=2,
+        gradient_accumulation_steps=32,
+        num_train_epochs=5,
+        dataset_num_proc=32,  # tokenization will use 32 processes
+        dataloader_num_workers=32,  # data loading will use 32 workers
+        logging_steps=10,
+        )
+        trainer = DPOTrainer(
+            peft_model,
+            ref_model=None,  # not needed when using peft
+            args=training_args,
+            train_dataset=pref_dataset,
+            tokenizer=processor,
+            peft_config=peft_config,
+        )
+
+        trainer.train()
 
 main()
 
@@ -208,4 +255,4 @@ main()
 #     parser.add_argument('--dataset-num-samples', type=int, required=False, help='Number of samples from the dataset')
 #     parser.add_argument('--seed', type=int, default=2025, help='Random seed')
 
-#     return parser.parse_args()
+    # return parser.parse_args()
