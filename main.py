@@ -39,13 +39,15 @@ def main():
     
     # Load the model and processor
     if mode == "eval":
-        # model, processor = load_vlm_model("llava-1.6")
+        model, processor = load_vlm_model("llava-1.6")
         # model, processor = load_vlm_model("unichart-chartqa")
-        model, processor = load_vlm_model("qwen-7b")
+        # model, processor = load_vlm_model("qwen-7b")
         # adapter_path = "llava-1.6-train-chartqa"
-        # adapter_path = "qwen-7b-train-chartqa-dpo-v2/checkpoint-775"
         # model = PeftModel.from_pretrained(model, adapter_path)
-        # model = model.merge_and_unload() 
+        # model = model.merge_and_unload()
+        adapter_path = "llava-1.6-train-chartqa-dpo-sft-v1/checkpoint-545"
+        model = PeftModel.from_pretrained(model, adapter_path)
+        model = model.merge_and_unload() 
         # model, processor = load_vlm_model("internvl-8b")
         dataset = ChartDataset("chartqa", processor=processor)
         test_dataset = dataset.load_chart_dataset(split = "test")
@@ -54,23 +56,24 @@ def main():
 
         pref_data = []
 
-        for batch in tqdm.tqdm(test_dataset):
-            pred = get_vlm_output(model, processor, [batch['image']], [batch['query']])
-            print(pred, batch['label'][0])
+        loader = dataset.create_loader(test_dataset, bsz=16)
 
+        for batch in tqdm.tqdm(loader):
+            pred = get_vlm_output(model, processor, batch[0], batch[1])
             # Exact match
-            em_correct += exact_match(pred, batch['label'][0])
+            em_correct += exact_match(pred, batch[2])
             # Realaxed accuracy
-            ra_correct += relaxed_accuracy([pred],batch['label'])[0]
-            if relaxed_accuracy([pred],batch['label'])[0] == 0:
-                pref_data.append([batch, pred])
-            print(len(pref_data))
+            ra_correct += relaxed_accuracy(pred, batch[2])
+
+            # if relaxed_accuracy([pred],batch['label'])[0] == 0:
+            #     pref_data.append([batch, pred])
+            # print(len(pref_data))
                 
             #ROUGE-L
             #F1
             #BLEU
 
-            total+=1
+            total += len(batch[0])
 
             print("EM: ",em_correct/total)
             print("Relaxed Accuracy: ",ra_correct/total)
@@ -192,30 +195,25 @@ def main():
         # train_dataset = dataset.load_chart_dataset(split = "train")
         eval_dataset = dataset.load_chart_dataset(split = "val")
         logging.info("Loaded model, pref and eval datasets")
-
-        bnb_config = BitsAndBytesConfig(
-                    load_in_4bit=True, 
-                    bnb_4bit_use_double_quant=True, 
-                    bnb_4bit_quant_type="nf4", 
-                    bnb_4bit_compute_dtype=torch.bfloat16)
                     
-        peft_config = LoraConfig(
+        dpo_peft_config = LoraConfig(
                     lora_alpha=16,
                     lora_dropout=0.05,
                     r=8,
                     bias="none",
-                    target_modules=["q_proj", "v_proj"],
+                    # target_modules=["q_proj", "v_proj"],
+                    target_modules=["gate_proj", "up_proj", "down_proj"],
                     # target_modules = ["wqkv", "wo"],
-                    task_type="CAUSAL_LM",)
+                    )
 
 
-        peft_model = get_peft_model(model, peft_config)
+        peft_model = get_peft_model(model, dpo_peft_config)
         print(peft_model.print_trainable_parameters())
 
         logging.info("Loaded model+LORA adapters")
 
         training_args = DPOConfig(
-        output_dir=model_name+"-train-chartqa-dpo-sft-v1",  # Directory to save the model
+        output_dir=model_name+"-train-chartqa-dpo-sft-v2",  # Directory to save the model
         bf16=True,
         gradient_checkpointing=True,
         per_device_train_batch_size=2,
@@ -231,7 +229,7 @@ def main():
             args=training_args,
             train_dataset=pref_dataset,
             tokenizer=processor,
-            peft_config=peft_config,
+            peft_config=dpo_peft_config,
         )
 
         trainer.train()

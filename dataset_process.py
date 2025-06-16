@@ -50,6 +50,10 @@ class ChartDataset:
             # return test_dataloader
             return data
 
+    def create_loader(self, data, bsz=1):
+        dataloader = DataLoader(data, batch_size = bsz, collate_fn = self.collate_fn_chartqa)
+        return dataloader
+
     def collate_fn_chartqa(self, batch):
         # for quick evals
         image_batch = []
@@ -60,7 +64,7 @@ class ChartDataset:
         for idx in range(len(batch)):
             image_batch.append(batch[idx]['image'])
             query_batch.append(batch[idx]['query'])
-            label_batch.append(batch[idx]['label'])
+            label_batch.append(batch[idx]['label'][0])
             machine_human_batch.append(batch[idx]['human_or_machine'])
 
         return image_batch, query_batch, label_batch, machine_human_batch

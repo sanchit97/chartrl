@@ -9,21 +9,24 @@ from qwen_vl_utils import process_vision_info
 
 
 def get_vlm_output(model, processor, image, query):
+    query =  [get_prompt_temp(q) for q in query]
     if "llava" in model.__class__.__name__.lower():
-        messages = [
-            {
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": get_prompt_temp(query[0])},
-                    {"type": "image"},
-                ]
-            },
-        ]
+        messages = []
+        for q in query:
+            messages.append([
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text":(q)},
+                        {"type": "image"},
+                    ]
+                },
+            ])
         prompt = processor.apply_chat_template(messages, add_generation_prompt=True)
-        inputs = processor(images=image[0], text=prompt, return_tensors="pt").to(model.device)
+        inputs = processor(images=image, text=prompt, return_tensors="pt", padding=True).to(model.device)
         output = model.generate(**inputs, max_new_tokens=100)
-        out_text = processor.decode(output[0], skip_special_tokens=True)
-        out_text = out_text.split("[/INST]")[-1].strip()
+        out_text = processor.batch_decode(output, skip_special_tokens=True)
+        out_text = [o.split("[/INST]")[-1].strip() for o in out_text]
 
     elif "qwen" in model.__class__.__name__.lower():
         system_message = """You are a Vision Language Model specialized in interpreting visual data from chart images.
@@ -161,11 +164,15 @@ def get_prompt_temp(q):
     prefix = "Look at the chart. %s Answer with a single phrase only."%q
     return prefix
 
-def normalize_answer(ans):
-    ans = str(ans)
-    # Keep only alphanumerics and spaces
-    ans = re.sub(r'[^A-Za-z0-9 .]+', '', ans)
-    return ans.strip().lower()
+def normalize_answer(answer):
+    """Lower text and remove punctuation, articles and extra whitespace."""
+    text = []
+    for ans in answer:
+        ans = str(ans)
+        # Keep only alphanumerics and spaces
+        ans = re.sub(r'[^A-Za-z0-9 .]+', '', ans)
+        text.append(ans.strip().lower())
+    return text
 
 def clear_memory():
     # Delete variables if they exist in the current global scope

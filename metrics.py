@@ -8,9 +8,11 @@ import torch
 
 
 def exact_match(pred, label):
-    if pred.lower() == label.lower():
-        return 1
-    return 0
+    tot=0
+    for i in range(len(pred)):
+        if pred[i].lower() == label[i].lower():
+            tot+=1
+    return tot
 
 
 def _norm(text: str) -> str:
@@ -45,7 +47,7 @@ def relaxed_accuracy(
         else:                                  # string case
             ok = (r == p)
         flags.append(int(ok))
-    return sum(flags) / len(flags) if flags else 0.0, flags
+    return sum(flags) #/ len(flags) if flags else 0.0, flags
 
 # worse version used by unichart (dont use it)
 # def relaxed_accuracy(refs, preds):
