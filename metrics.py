@@ -47,7 +47,8 @@ def relaxed_accuracy(
         else:                                  # string case
             ok = (r == p)
         flags.append(int(ok))
-    return sum(flags) #/ len(flags) if flags else 0.0, flags
+
+    return sum(flags), flags #/ len(flags) if flags else 0.0, flags
 
 # worse version used by unichart (dont use it)
 # def relaxed_accuracy(refs, preds):

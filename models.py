@@ -1,9 +1,13 @@
+import os
+
 import torch
 from torch.utils.data import DataLoader
 from torchvision.utils import draw_bounding_boxes
 from torchvision.transforms.functional import pil_to_tensor, to_pil_image
 from torch.nn.parallel import DataParallel
 import torch.nn.functional as F
+
+os.environ["FLASH_ATTENTION_2_ENABLED"] = "1"
 
 from datasets import Dataset, load_dataset, load_from_disk
 
@@ -13,6 +17,8 @@ from transformers import AutoModel, AutoProcessor, AutoTokenizer, AutoModelForIm
 from transformers import pipeline
 
 from transformers import DonutProcessor, VisionEncoderDecoderModel
+
+from transformers import pipeline
 
 import argparse
 from tqdm import tqdm
@@ -67,6 +73,8 @@ def load_vlm_model(model_type):
     if model_type == "qwen-7b":
         processor = AutoProcessor.from_pretrained("Qwen/Qwen2-VL-7B-Instruct")
         model = AutoModelForImageTextToText.from_pretrained("Qwen/Qwen2-VL-7B-Instruct", device_map="auto",cache_dir = cache_dir, attn_implementation = "flash_attention_2", torch_dtype=torch.bfloat16)
+        # processor = AutoProcessor.from_pretrained("Qwen/Qwen2-VL-7B")
+        # model = AutoModelForImageTextToText.from_pretrained("Qwen/Qwen2-VL-7B", device_map="auto",cache_dir = cache_dir, attn_implementation = "flash_attention_2", torch_dtype=torch.bfloat16)
     if model_type == "internvl-8b":
         processor = AutoTokenizer.from_pretrained("OpenGVLab/InternVL2_5-8B", device_map="auto",cache_dir = cache_dir, trust_remote_code=True)
         model = AutoModel.from_pretrained("OpenGVLab/InternVL2_5-8B", device_map="auto",cache_dir = cache_dir, trust_remote_code=True)
@@ -86,7 +94,7 @@ def load_vlm_model(model_type):
         model = AutoModelForImageTextToText.from_pretrained("llava-hf/llava-v1.6-vicuna-13b-hf", device_map="auto",cache_dir = cache_dir)
 
 
-    # For SOTA models (very big)s
+    # For SOTA models (very big)
     if model_type == "internvl-26b":
         processor = AutoProcessor.from_pretrained("OpenGVLab/InternVL2_5-26B", device_map="auto",cache_dir = cache_dir, trust_remote_code=True)
         model = AutoModel.from_pretrained("OpenGVLab/InternVL2_5-26B", device_map="auto",cache_dir = cache_dir, trust_remote_code=True)
@@ -99,6 +107,12 @@ def load_vlm_model(model_type):
         model = VisionEncoderDecoderModel.from_pretrained(model_name).cuda()
         processor = DonutProcessor.from_pretrained(model_name)
     
+
+
+    # OCR models (pipelines)
+    if model_type == "generic-ocr":
+        pipe = pipeline("image-text-to-text", model="Qwen/Qwen2-VL-2B-Instruct")
+        return pipe
 
     return model, processor
 
