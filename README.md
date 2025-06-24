@@ -25,7 +25,7 @@ Repo for RL post-training on Chart data
 |                | Apo Zero   | **72.04** |
 
 
-![image info](./ablation-dpo-loss "Ablation DPO Loss")
+![image info](./ablation-dpo-loss.png "Ablation DPO Loss")
 
 
 
