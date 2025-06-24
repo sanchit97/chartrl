@@ -2,7 +2,7 @@
 
 Repo for RL post-training on Chart data
 
-## Main Inference Results for 
+## Main Inference Results
 
 | Model                     | Training  | ChartQA (RA) | PlotQA (RA) |
 |---------------------------|-----------|-------------:|------------:|
@@ -23,6 +23,9 @@ Repo for RL post-training on Chart data
 |                | Sppo_hard  | 71.88 |
 |                | Hinge      | **72.04** |
 |                | Apo Zero   | **72.04** |
+
+
+![image info](./ablation-dpo-loss "Ablation DPO Loss")
 
 
 
