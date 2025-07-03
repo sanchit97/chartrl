@@ -15,7 +15,8 @@ from datasets import Dataset
 from models import load_vlm_model
 
 dset = "/mnt/home/sanchit/rl-chart/gt-tables/ChartQA/ChartQA Dataset/train/"
-model, processor = load_vlm_model("qwen-7b")
+# model, processor = load_vlm_model("qwen-7b")
+model, processor = load_vlm_model("llava-1.6")
 
 # --------------------------------------------------------------------
 #  Core helper
@@ -628,10 +629,12 @@ def main():
         # print(chart_type)
         # breakpoint()
     print("Charts skipped:", err)
-    breakpoint()
+    # breakpoint()
     dataset = Dataset.from_list(all_data)
     pref_dataset = dataset.map(pref_format, num_proc=32)
-    pref_dataset.save_to_disk("./pref-data/base-qwen-7b-hf-dset-tabular")
+    # pref_dataset.save_to_disk("./pref-data/base-qwen-7b-hf-dset-tabular")
+    pref_dataset.save_to_disk("./pref-data/llava-1.6-hf-dset-tabular")
+
 
 
 main()

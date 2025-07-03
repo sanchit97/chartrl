@@ -4,6 +4,7 @@ import re
 import time
 import pickle
 import random
+import argparse
 
 os.environ["FLASH_ATTENTION_2_ENABLED"] = "1"
 
@@ -24,7 +25,7 @@ from dataset_process import ChartDataset, PlotQADataset, ChartToTextDataset
 
 
 from metrics import exact_match, relaxed_accuracy
-from utils import get_vlm_output, clear_memory, format_data
+from utils import get_vlm_output, clear_memory, format_data, select_icl_samples
 
 import logging, os
 
@@ -40,73 +41,142 @@ logging.basicConfig(
 )
 
 
+def parse_args():
+    parser = argparse.ArgumentParser(description="Argument parser for VLM evaluation pipeline")
+
+    parser.add_argument('--mode', type=str, choices=["eval", "sft", "dpo", "ppo", "grpo"], required=True, help='Run mode')
+    parser.add_argument('--vlm-name', type=str, required=True, help='Name of the vision-language model')
+    parser.add_argument('--sft-lora', type=bool, required=False, default=False, help='Use LORA adapters for SFT and location')
+    parser.add_argument('--dpo-lora', type=bool, required=False, default=False, help='Use LORA adapters for DPO and location')
+    parser.add_argument('--dataset-name', type=str, required=True, help='Name of the dataset to use')
+    parser.add_argument('--dataset-split', type=str, required=False, default = "test", help='Dataset split')
+    parser.add_argument('--seed', type=int, default=2025, help='Random seed')
+    parser.add_argument('--cot', type=bool, default=False, help='To use CoT or not')
+    parser.add_argument('--icl', type=bool, default=False, help='To use ICL examples for inference or not')
+
+    return parser.parse_args()
+
 def main():
-    mode = "eval"  # Change to "sft" for supervised fine-tuning
     # Parse command line arguments
-    # args = parse_args()
-    
-    # Load the model and processor
-    if mode == "eval":
+    args = parse_args()
 
-        # dataset = ChartToTextDataset()
-        # test_dataset = dataset.load(split = "test")
+    # TODO: Load the model and processor for chart specific models (they dont work with batched inputs)
+    model, processor = load_vlm_model(args.vlm_name)
+    logging.info("Loaded model and processor")
 
-        # dataset = PlotQADataset("plotqa", processor=None)
-        # test_dataset = dataset.load_plotqa_dataset(split = "test")
-
-        # model, processor = load_vlm_model("llava-1.6")
-        model, processor = load_vlm_model("qwen-7b")
-
-
-
-        # model, processor = load_vlm_model("internvl-8b")
-
-        # TODO: Load the model and processor for chart specific models (they dont work with batched inputs)
-        # model, processor = load_vlm_model("unichart-chartqa")
-
-        # SFT adapter
-        # adapter_path = "qwen-7b-train-chartqa-v4-all-warmup"
-        adapter_path = "/mnt/home/sanchit/Qwen2-VL-Finetune/output/chartqa_lora"
-        model = PeftModel.from_pretrained(model, adapter_path)
-        model = model.merge_and_unload()
-
-        # DPO adapter
-        # adapter_path = "llava-1.6-train-chartqa-dpo-sft-v5-hardneg-beta-0.3/checkpoint-4000"
-        adapter_path = "qwen-7b-train-chartqa-dpo-sft-v1-hardneg-beta-0.3-test/checkpoint-4000"
-        model = PeftModel.from_pretrained(model, adapter_path)
-        model = model.merge_and_unload()
-
+    if args.dataset_name == "chartqa":
         dataset = ChartDataset("chartqa", processor=processor)
         test_dataset = dataset.load_chart_dataset(split = "test")
-        # test_dataset = dataset.load_chart_dataset(split = "train")
+        if args.icl:
+            train_dataset = dataset.load_chart_dataset(split = "train")
 
-        # dataset = PlotQADataset("plotqa", processor=processor)
-        # test_dataset = dataset.load_plotqa_dataset(split = "test")
-        # test_dataset = test_dataset.shuffle(seed=seed)
-        # test_dataset = test_dataset.select(range(5000))
+    elif args.dataset_name == "chartqapro":
+        dataset = ChartDataset("chartqapro", processor=processor)
+        test_dataset = dataset.load_chart_dataset(split = "test")
+        if args.icl:
+            train_dataset = dataset.load_chart_dataset(split = "train")
 
-        # dataset = ChartToTextDataset("chartqa", processor=processor)
-        # test_dataset = dataset.load(split = "test")
+    elif args.dataset_name == "plotqa":
+        dataset = PlotQADataset("plotqa", processor=processor)
+        test_dataset = dataset.load_plotqa_dataset(split = "test")
+        test_dataset = test_dataset.shuffle(seed=seed)
+        test_dataset = test_dataset.select(range(5000))
+
+        if args.icl:
+            train_dataset = dataset.load_plotqa_dataset(split = "train")
+            train_dataset = train_dataset.shuffle(seed=seed)
+            train_dataset = train_dataset.select(range(50000))
+
+    elif args.dataset_name == "figqa":
+        dataset = ChartDataset("figqa", processor=processor)
+        test_dataset = dataset.load_chart_dataset(split = "test")
+        if args.icl:
+            train_dataset = dataset.load_chart_dataset(split = "train")
+
+    elif args.dataset_name == "charttotext":
+        dataset = ChartToTextDataset("chart2text", processor=processor)
+        test_dataset = dataset.load(split = "test")
+        if args.icl:
+            train_dataset = dataset.load(split = "train")
+
+    # elif args.dataset_name == "all-ra":
+    #     dataset = ChartDataset("chartqa", processor=processor)
+    #     test_dataset_chartqa = dataset.load_chart_dataset(split = "test")
+    #     dataset = PlotQADataset("plotqa", processor=processor)
+    #     test_dataset = dataset.load_plotqa_dataset(split = "test")
+    #     test_dataset = test_dataset.shuffle(seed=seed)
+    #     test_dataset_plotqa = test_dataset.select(range(5000))
+    #     dataset = ChartDataset("figqa", processor=processor)
+    #     test_dataset_figqa = dataset.load_chart_dataset(split = "test")
+
+    
+    # Load the model and processor
+    if args.mode == "eval":
+        # SFT adapter
+        if args.sft_lora:
+            # adapter_path = args.sft_lora
+            # adapter_path = "llava-1.6-train-plotqa-v0"
+            adapter_path = "llava-1.6-train-chartqa"
+            # adapter_path = "/mnt/home/sanchit/Qwen2-VL-Finetune/output/chartqa_lora-v0"
+            # adapter_path = "/mnt/home/sanchit/Qwen2-VL-Finetune/output/chartqa_lora-v0"
+            # adapter_path = "/mnt/home/sanchit/Qwen2-VL-Finetune/output/chartqa_lora-v0"
+            # adapter_path = "llava-1.6-base-train-charttotext"
+            model = PeftModel.from_pretrained(model, adapter_path)
+            model = model.merge_and_unload()
+            logging.info("Loaded model with SFT adapters from {}".format(adapter_path))
+
+        # DPO adapter
+        if args.dpo_lora:
+            # adapter_path = "llava-1.6-train-chartqa-dpo-sft-v5-hardneg-beta-0.3/checkpoint-4000"
+            # adapter_path = "qwen-7b-train-chartqa-dpo-no-sft-v1-hardneg-beta-0.3-test/checkpoint-7000"
+            # adapter_path = "qwen-7b-train-chartqa-dpo-no-sft-v1-hardneg-beta-0.3-ipo/checkpoint-7000"
+            # adapter_path = "qwen-7b-train-chartqa-dpo-no-sft-v1-hardneg-beta-0.3-hinge/checkpoint-7000"
+            # adapter_path = "qwen-7b-train-chartqa-dpo-no-sft-v1-hardneg-beta-0.3-sppo_hard/checkpoint-7000"
+            # adapter_path = "qwen-7b-train-chartqa-dpo-no-sft-v1-hardneg-beta-0.3-apo_zero/checkpoint-7000"
+            # adapter_path = args.dpo_lora
+
+            adapter_path = "qwen-7b-train-chartqa-dpo-no-sft-v2-ocr-tabular-ocr-qwen-data-high-caphinge/checkpoint-20000"
+            # adapter_path = "llava-1.6-dpo-sft-v2-ocr-tabular-high-cap-hinge/checkpoint-20000"
+            model = PeftModel.from_pretrained(model, adapter_path)
+            model = model.merge_and_unload()
+
+            logging.info("Loaded model with DPO adapters from {}".format(adapter_path))
 
 
         em_correct, ra_correct, tot_bleuscore, total = 0, 0, 0, 0
 
         wrongs = []
         pref_data = []
+        
+        logging.info("Starting evaluation on {} samples".format(len(test_dataset)))
+        logging.info("Using CoT: {}".format(args.cot))
 
-        loader = dataset.create_loader(test_dataset, bsz=32)
+        loader = dataset.create_loader(test_dataset, bsz=4)
+
+        if args.icl:
+            path = "./icl-examples/"+args.dataset_name+"-icl_samples.pkl"
+            if os.path.exists(path):
+                icl_samples = pickle.load(open(path, 'rb')) # load in the ICL examples : list of [img, text, answer]
+                logging.info("Loaded ICL examples from {}".format(path))
+            else:
+                icl_samples = select_icl_samples(train_dataset, k=5)
+                logging.info("Selected ICL examples")
+                pickle.dump(icl_samples, open(path, 'wb'))
 
         for batch in tqdm.tqdm(loader):
-            pred = get_vlm_output(model, processor, batch[0], batch[1])
-
-            print(pred,batch[2])
-
+            if args.icl:
+                pred, rationale = get_vlm_output(model, processor, batch[0], batch[1], args.cot, icl_samples)
+            else:
+                pred, rationale = get_vlm_output(model, processor, batch[0], batch[1], args.cot)
+            print(pred)
+            print(batch[2])
+            print(rationale)
+            # breakpoint()
             # TODO: Understand why this takes so long (and optimize)
-            # bleu_score = 0
+            bleu_score = 0
             # for i in range(len(pred)):
             #     bleu_score += sacrebleu.corpus_bleu([batch[2][i]], [[pred[i]]]).score
-            # tot_bleuscore += bleu_score/len(pred)
-
+            tot_bleuscore += bleu_score
             # Exact match
             em_correct += exact_match(pred, batch[2])
             # Realaxed accuracy
@@ -120,9 +190,12 @@ def main():
             #     if ra[1][i] == 0:
             #         wrongs.append((batch[0][i], batch[1][i], batch[2][i], pred[i]))
             # if pref_data:
-            # if relaxed_accuracy([pred],batch['label'])[0] == 0:
-            #     pref_data.append([batch, pred])
+
+            # for i in range(len(pred)):
+            #     # if relaxed_accuracy( [pred[i]], [batch[2][i]])[0] == 0:
+            #     pref_data.append([batch[0][i], batch[1][i], batch[2][i], batch[3][i], pred[i]])
             # print(len(pref_data))
+
                 
             #ROUGE-L
             #F1
@@ -139,15 +212,15 @@ def main():
         # breakpoint()
         # pickle.dump(open('./img-output/llava-1.6-mistakes.pkl'), wrongs)
 
-        # with open('./pref-data/base-llava-1.6-sft', 'wb') as f:
+        # with open('./pref-data/llava-1.6-plotqa.pkl', 'wb') as f:
         #     pickle.dump(pref_data, f)
 
-    if mode == "sft":
+    if args.mode == "sft":
         os.environ["WANDB_CONSOLE"] = "wrap" 
         wandb.init(project="chartrl", entity="chartrl")
         # Load the dataset and model for SFT
-        # model_name = "llava-1.6"  # Change to the desired model name
-        model_name = "qwen-7b"
+        model_name = "llava-1.6"  # Change to the desired model name
+        # model_name = "qwen-7b"
         # model_name = "internvl-8b"
         model, processor = load_vlm_model(model_name)
 
@@ -157,15 +230,18 @@ def main():
         # eval_dataset = dataset.load_chart_dataset(split = "val")
 
         
-        dataset = PlotQADataset("plotqa", processor=processor)
-        train_dataset = dataset.load_plotqa_dataset(split = "train")
-        train_dataset = train_dataset.shuffle(seed=seed, keep_in_memory=True)
-        train_dataset = train_dataset.select(range(50000))
+        # dataset = PlotQADataset("plotqa", processor=processor)
+        # train_dataset = dataset.load_plotqa_dataset(split = "train")
+        # train_dataset = train_dataset.shuffle(seed=seed, keep_in_memory=True)
+        # train_dataset = train_dataset.select(range(50000))
+        # eval_dataset = dataset.load_plotqa_dataset(split = "validation")
+        # eval_dataset = eval_dataset.shuffle(seed=seed, keep_in_memory=True)
+        # eval_dataset = eval_dataset.select(range(5000))
 
 
-        eval_dataset = dataset.load_plotqa_dataset(split = "validation")
-        eval_dataset = eval_dataset.shuffle(seed=seed, keep_in_memory=True)
-        eval_dataset = eval_dataset.select(range(5000))
+        dataset = ChartToTextDataset("chartqa", processor=processor)
+        train_dataset = dataset.load(split = "train")
+        eval_dataset = dataset.load(split = "test")
 
         # train_dataset = [format_data(sample) for sample in train_dataset]
         # eval_dataset = [format_data(sample) for sample in eval_dataset]
@@ -196,7 +272,7 @@ def main():
         logging.info("Loaded model+LORA adapters")
 
         training_args = SFTConfig(
-            output_dir=model_name+"-base-train-plotqa",  # Directory to save the model
+            output_dir=model_name+"-base-train-charttotext",  # Directory to save the model
             num_train_epochs=3,  # Number of training epochs
             per_device_train_batch_size=4,  # Batch size for training
             per_device_eval_batch_size=4,  # Batch size for evaluation
@@ -233,7 +309,7 @@ def main():
         )
 
         training_args.remove_unused_columns = False  # Keep unused columns in dataset
-        # training_args.dataloader_num_workers = 4  # Number of workers for data loading
+        training_args.dataloader_num_workers = 4  # Number of workers for data loading
 
         logging.info("Training arguments set up")
 
@@ -242,8 +318,9 @@ def main():
             args=training_args,
             train_dataset=train_dataset,
             eval_dataset=eval_dataset,
-            data_collator=dataset.train_collate_fn_plotqa,
+            # data_collator=dataset.train_collate_fn_plotqa,
             # data_collator=dataset.train_collate_fn_chartqa,
+            data_collator=dataset.train_collate_fn_charttotext,
             peft_config=peft_config,
             tokenizer=processor.tokenizer,
         )
@@ -256,28 +333,55 @@ def main():
         logging.info("Model saved to {}".format(training_args.output_dir))
 
 
-    if mode == "dpo":
+    if args.mode == "dpo":
         os.environ["WANDB_CONSOLE"] = "wrap" 
         wandb.init(project="chartrl", entity="chartrl")
-        # Load the dataset and model for SFT
-        # model_name = "llava-1.6"  # Change to the desired model name
-        model_name = "qwen-7b"
-        model, processor = load_vlm_model(model_name)
-        adapter_path = "qwen-7b-train-chartqa-v4-all-warmup"
+
+        if args.sft_lora:
+            # adapter_path = "llava-1.6-train-plotqa-v0"
+            # adapter_path = "/mnt/home/sanchit/Qwen2-VL-Finetune/output/chartqa_lora-v0"
+            # adapter_path = "/mnt/home/sanchit/Qwen2-VL-Finetune/output/chartqa_lora-v0"
+            # adapter_path = "/mnt/home/sanchit/Qwen2-VL-Finetune/output/chartqa_lora-v0"
+            adapter_path = "llava-1.6-train-chartqa"
+            model = PeftModel.from_pretrained(model, adapter_path)
+            model = model.merge_and_unload()
+            logging.info("Loaded model with SFT adapters from {}".format(adapter_path))
+
         model = PeftModel.from_pretrained(model, adapter_path)
-        model = model.merge_and_unload() 
+        model = model.merge_and_unload()
+
+        # 1. Patch get/set_input_embeddings if needed
+        # if not hasattr(model, "get_input_embeddings"):
+        #     model.get_input_embeddings = MethodType(lambda self: self.model.embed_tokens, model)
+        #     model.set_input_embeddings = MethodType(lambda self, x: setattr(self.model, "embed_tokens", x), model)
+
+        # # 2. Patch enable_input_require_grads if needed
+        # if not hasattr(model, "enable_input_require_grads"):
+        #     def _enable_input_require_grads(self):
+        #         self.get_input_embeddings().register_forward_hook(
+        #             lambda _, __, out: out.requires_grad_(True)
+        #         )
+        #     model.enable_input_require_grads = MethodType(_enable_input_require_grads, model)
+
+
+        # adapter_path = "qwen-7b-train-chartqa-v4-all-warmup"
+        # model = PeftModel.from_pretrained(model, adapter_path)
+        # model = model.merge_and_unload() 
         # breakpoint()
-        dataset = ChartDataset("chartqa", processor=processor)
+        # dataset = ChartDataset("chartqa", processor=processor)
         pref_dataset = dataset.load_pref_data()
         # pref_dataset = pref_dataset.map(dataset.pref_format, batched=True, batch_size=32, num_proc=4)
         # train_dataset = dataset.load_chart_dataset(split = "train")
-        eval_dataset = dataset.load_chart_dataset(split = "val")
+        # eval_dataset = dataset.load_pref_data()[:200]
+
+        lossname = "hinge"
         logging.info("Loaded model, pref and eval datasets")
+        logging.info("Using:", lossname)
                     
         dpo_peft_config = LoraConfig(
-                    lora_alpha=16,
+                    lora_alpha=256,
                     lora_dropout=0.05,
-                    r=8,
+                    r=256,
                     bias="none",
                     # TODO: Ablations on this yielded QV==ALL, lets keep all for now
                     # target_modules=["q_proj", "v_proj"],
@@ -293,22 +397,28 @@ def main():
         logging.info("Loaded model+LORA adapters")
 
         training_args = DPOConfig(
-        output_dir=model_name+"-train-chartqa-dpo-sft-v1-hardneg-beta-0.3-test",  # Directory to save the model
+        # output_dir=model_name+"-train-chartqa-dpo-sft-v1-hardneg-beta-0.3-test",  # Directory to save the model
+        # output_dir=args.vlm_name+"-train-chartqa-dpo-no-sft-v2-ocr-tabular-ocr-qwen-data-high-cap"+lossname,  # Directory to save the model
+        output_dir=args.vlm_name+"-dpo-sft-v2-ocr-tabular-high-cap-"+lossname,  # Directory to save the model
         bf16=True,
         gradient_checkpointing=True,
-        per_device_train_batch_size=32,
+        per_device_train_batch_size=8,
         gradient_accumulation_steps=2,
         num_train_epochs=3,
         dataset_num_proc=32,  # tokenization will use 32 processes
         dataloader_num_workers=32,  # data loading will use 32 workers
         logging_steps=10,
+        # evaluation_strategy="steps",
+        # eval_steps=500,
         beta=0.3,  # DPO beta parameter (default: 0.1)
+        loss_type = lossname, # try different stuff
         )
         trainer = DPOTrainer(
             peft_model,
             ref_model=None,  # not needed when using peft
             args=training_args,
             train_dataset=pref_dataset,
+            # eval_dataset=eval_dataset,
             tokenizer=processor,
             peft_config=dpo_peft_config,
         )
@@ -322,16 +432,3 @@ main()
 
 
 
-
-# def parse_args():
-#     parser = argparse.ArgumentParser(description="Argument parser for VLM/LLM evaluation pipeline")
-
-#     parser.add_argument('--mode', type=str, choices=["eval", "sft", "dpo", "ppo", "grpo"], required=True, help='Run mode')
-
-#     parser.add_argument('--vlm-name', type=str, required=False, help='Name of the vision-language model')
-#     parser.add_argument('--dataset-name', type=str, required=True, help='Name of the dataset to use')
-#     parser.add_argument('--dataset-split', type=str, required=False, default = "test", help='Dataset split')
-#     parser.add_argument('--dataset-num-samples', type=int, required=False, help='Number of samples from the dataset')
-#     parser.add_argument('--seed', type=int, default=2025, help='Random seed')
-
-    # return parser.parse_args()

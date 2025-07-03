@@ -1,5 +1,6 @@
 import os
 import torch
+import io
 from PIL import Image as PILImage
 from torch.utils.data import DataLoader
 from torchvision.transforms.functional import pil_to_tensor, to_pil_image
@@ -9,8 +10,9 @@ import pickle
 from tqdm import tqdm
 from pathlib import Path
 import json
+from io import BytesIO
 
-from datasets import Dataset, load_dataset, load_from_disk, Image, DatasetDict
+from datasets import Dataset, load_dataset, load_from_disk, Image, DatasetDict, concatenate_datasets
 from transformers import Blip2Processor, Blip2ForConditionalGeneration, InstructBlipProcessor, InstructBlipForConditionalGeneration
 from transformers import LlavaForConditionalGeneration, LlavaNextProcessor, LlavaNextForConditionalGeneration
 from transformers import AutoModel, AutoProcessor, AutoTokenizer, AutoModelForImageTextToText, AutoModelForVisualQuestionAnswering,AutoModelForCausalLM, AutoModelForZeroShotObjectDetection
@@ -24,6 +26,11 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s | %(levelname)s | %(name)s | %(message)s"
 )
+
+import random
+seed = 2025
+random.seed(seed)
+
 
 # Caching
 cache_dir = '/mnt/data/sanchit/hf'
@@ -45,16 +52,64 @@ class ChartDataset:
 
         self.system_message = ""
 
-    def load_chart_dataset(self, split):
+    def load_chart_dataset(self, split=None):
         if self.dataset_name == "chartqa":
             dataset = load_dataset("HuggingFaceM4/ChartQA", cache_dir = cache_dir)
             data = dataset[split]
             # test_dataloader = DataLoader(test_data, batch_size=1, collate_fn = collate_fn_chartqa)
             # return test_dataloader
             return data
+        if self.dataset_name == "chartqapro":
+            dataset = load_dataset("ahmed-masry/ChartQAPro", cache_dir = cache_dir)
+            data = dataset[split]
+            # test_dataloader = DataLoader(test_data, batch_size=1, collate_fn = collate_fn_chartqa)
+            # return test_dataloader
+            return data
+        
+        elif self.dataset_name == "figqa":
+            if os.path.exists(cache_dir+"/figqa_dataset"):
+                figqa = load_from_disk(str(cache_dir+"/figqa_dataset"))
+            
+            else:
+                dataset = load_dataset("vikhyatk/figureqa", cache_dir = cache_dir)
+                # all data is in train split
+                data = dataset["train"]
+                all_data = []
+                for img_line, qa_line in tqdm(zip(data["image"],data["qa"])):
+                    img = PILImage.open(BytesIO(img_line["bytes"])).convert("RGB")
+                    for ques in qa_line:
+                        all_data.append({
+                            "image": img,
+                            "query": ques["question"],
+                            "label": ques["answer"],
+                        })
+                # breakpoint()
+                
+                random.shuffle(all_data)
+                shuffled_dataset = all_data
+                # breakpoint()
+
+                train_dataset = Dataset.from_list(shuffled_dataset[:int(len(shuffled_dataset)*0.8)])
+                val_dataset = Dataset.from_list(shuffled_dataset[int(len(shuffled_dataset)*0.8):int(len(shuffled_dataset)*0.9)])
+                test_dataset = Dataset.from_list(shuffled_dataset[int(len(shuffled_dataset)*0.9):])
+
+                figqa = DatasetDict({
+                    "train":      train_dataset,
+                    "validation": val_dataset,
+                    "test":       test_dataset,
+                })
+
+                figqa.save_to_disk(str(cache_dir+"/figqa_dataset"))
+
+            return figqa[split]
 
     def create_loader(self, data, bsz=1):
-        dataloader = DataLoader(data, batch_size = bsz, collate_fn = self.collate_fn_chartqa)
+        if self.dataset_name == "chartqa":
+            dataloader = DataLoader(data, batch_size = bsz, collate_fn = self.collate_fn_chartqa)
+        elif self.dataset_name == "chartqapro":
+            dataloader = DataLoader(data, batch_size = bsz, collate_fn = self.collate_fn_chartqapro)
+        elif self.dataset_name == "figqa":
+            dataloader = DataLoader(data, batch_size = bsz, collate_fn = self.collate_fn_figqa)
         return dataloader
 
     def collate_fn_chartqa(self, batch):
@@ -71,6 +126,35 @@ class ChartDataset:
             machine_human_batch.append(batch[idx]['human_or_machine'])
 
         return image_batch, query_batch, label_batch, machine_human_batch
+
+    
+    def collate_fn_chartqapro(self, batch):
+        # for quick evals
+        image_batch = []
+        query_batch = []
+        label_batch = []
+        question_type_batch = []
+        
+        for idx in range(len(batch)):
+            image_batch.append(PILImage.open(io.BytesIO(batch[idx]['image'])).convert("RGB"))
+            query_batch.append(batch[idx]['Question'])
+            label_batch.append(batch[idx]['Answer'][0])
+            question_type_batch.append(batch[idx]['Question Type'])
+
+        return image_batch, query_batch, label_batch, question_type_batch
+    
+    def collate_fn_figqa(self, batch):
+        # for quick evals
+        image_batch = []
+        query_batch = []
+        label_batch = []
+        
+        for idx in range(len(batch)):
+            image_batch.append(batch[idx]['image'])
+            query_batch.append(batch[idx]['query'])
+            label_batch.append(batch[idx]['label'])
+
+        return image_batch, query_batch, label_batch
 
     def train_collate_fn_chartqa(self, examples): 
         processor = self.processor  # Use the processor from the class instance, this is messy though #TODO
@@ -206,10 +290,16 @@ class ChartDataset:
             },]
 
     def load_pref_data(self):
-        # path = "./pref-data/base-llava-1.6-sft-hf-dset"
-        path = "./pref-data/base-llava-1.6-sft-hf-dset-hard-negatives"
-        if os.path.exists(path):
-            pref_dataset = load_from_disk(path)
+        path1 = "./pref-data/base-llava-1.6-sft-hf-dset-hard-negatives"
+        path2 = "./pref-data/llava-1.6-hf-dset-tabular"
+
+        # path1 = "./pref-data/base-qwen-7b-hf-dset-hard-negatives"
+        # path2 = "./pref-data/base-qwen-7b-hf-dset-tabular"
+        if os.path.exists(path1):
+            pref_dataset1 = load_from_disk(path1)
+            pref_dataset2 = load_from_disk(path2)
+            # pref_dataset = pref_dataset2
+            pref_dataset = concatenate_datasets([pref_dataset1, pref_dataset2])
     
         else:
             logging.info("Pref Dataset not found, loading from pickle file... (can take a while)")
@@ -440,6 +530,8 @@ class PlotQADataset:
             },]
 
 
+
+
 # Chart2Text / OpenCQA
 class ChartToTextDataset:
     def __init__(self,
@@ -551,4 +643,264 @@ class ChartToTextDataset:
 
         return image_batch, query_batch, answer_batch, split_batch
 
+    def train_collate_fn_charttotext(self, examples):
+        processor = self.processor  # Use the processor from the class instance, this is messy though #TODO
+        # For SFT/RL
+        # Get the texts and images, and apply the chat template
+        # st = time.time()
+        image_inputs = [process_vision_info(self.format_question(example))[0] for example in examples]
 
+        for example in examples:
+            example.pop('image')    # Remove the image key to avoid issues with the processor
+
+        texts = [processor.apply_chat_template(self.format_question_text_only(example), tokenize=False, add_generation_prompt=True) for example in examples]  # Prepare texts for processing
+        # Process the images to extract inputs
+        # just collect them into a list
+        # image_inputs = [[example['image']] for example in examples]
+
+        # Tokenize the texts and process the images
+        batch = processor(
+            text=texts, images=image_inputs, return_tensors="pt", padding=True
+        )  # Encode texts and images into tensors
+
+        batch["input_ids"] = batch["input_ids"]#.to(dtype=torch.long) 
+        # The labels are the input_ids, and we mask the padding tokens in the loss computation
+        labels = batch["input_ids"].clone()  # Clone input IDs for labels
+        labels[labels == processor.tokenizer.pad_token_id] = -100  # Mask padding tokens in labels
+
+        # Ignore the image token index in the loss computation (model specific)
+        if "qwen" in processor.__class__.__name__.lower():  # Check if the processor is Qwen2VLProcessor
+            # image_tokens = [151643, 151652, 151653, 151654, 151655, 151656]  # Specific image token IDs 
+            image_tokens = [151643, 151652, 151653, 151654, 151655]
+            # image_tokens = [processor.tokenizer.convert_tokens_to_ids(tok) for tok in processor.tokenizer.additional_special_tokens]
+        elif "intern" in processor.__class__.__name__.lower():
+            image_tokens = [92542, 92543, 92544, 92545, 92546]
+        else: #llava type models
+            image_tokens = [processor.tokenizer.convert_tokens_to_ids(processor.image_token)]  # Convert image token to ID
+
+        # Mask image token IDs in the labels
+        for image_token_id in image_tokens:
+            labels[labels == image_token_id] = -100  # Mask image token IDs in labels
+
+        batch["labels"] = labels  # Add labels to the batch
+        # logging.info("Time to process batch: ",time.time()   - st)  # Log the time taken for processing
+        return batch  # Return the prepared batch
+
+    def format_question(self, example):
+        if "llava" in self.processor.__class__.__name__.lower():
+            return [
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "image",
+                        "image": example["image"],
+                    },
+                    {
+                        "type": "text",
+                        "text": example["query"],
+                    },
+                ],
+            },
+            {
+                "role": "assistant",
+                "content": [{"type": "text", "text": example["label"][0]}],
+            },]
+        else:
+            return [
+            {
+                "role": "system",
+                "content": [{"type": "text", "text": self.system_message}],
+            },
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "image",
+                        "image": example["image"],
+                    },
+                    {
+                        "type": "text",
+                        "text": example["query"],
+                    },
+                ],
+            },
+            {
+                "role": "assistant",
+                "content": [{"type": "text", "text": example["label"][0]}],
+            },]
+    
+
+    def format_question_text_only(self, example):
+        if "llava" in self.processor.__class__.__name__.lower():
+            return [
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "image",
+                        # "image": example["image"],
+                    },
+                    {
+                        "type": "text",
+                        "text": example["query"],
+                    },
+                ],
+            },
+            {
+                "role": "assistant",
+                "content": [{"type": "text", "text": example["label"][0]}],
+            },]
+        else:
+            return [
+            {
+                "role": "system",
+                "content": [{"type": "text", "text": self.system_message}],
+            },
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "image",
+                        # "image": example["image"],
+                    },
+                    {
+                        "type": "text",
+                        "text": example["query"],
+                    },
+                ],
+            },
+            {
+                "role": "assistant",
+                "content": [{"type": "text", "text": example["label"][0]}],
+            },]
+
+
+
+class Charxiv:
+    def __init__(self, dataset_name, processor=None):
+        self.dataset_name = dataset_name
+        # self.dataset = self.load_chart_dataset(dataset_name, split, bsz)
+        self.processor = processor
+
+        # self.system_message = """You are a Vision Language Model specialized in interpreting visual data from chart images.
+        # Your task is to analyze the provided chart image and respond to queries with concise answers, usually a single word, number, or short phrase.
+        # The charts include a variety of types (e.g., line charts, bar charts) and contain colors, labels, and text.
+        # Focus on delivering accurate, succinct answers based on the visual information. Avoid additional explanation unless absolutely necessary."""
+
+        self.system_message = ""
+
+    def load_chart_dataset(self, split):
+        if self.dataset_name == "charxiv":
+            dataset = load_dataset("princeton-nlp/CharXiv", cache_dir = cache_dir)
+            data = dataset[split]
+            # test_dataloader = DataLoader(test_data, batch_size=1, collate_fn = collate_fn_chartqa)
+            # return test_dataloader
+            return data
+
+    def create_loader(self, data, bsz=1):
+        dataloader = DataLoader(data, batch_size = bsz, collate_fn = self.collate_fn_chartqa)
+        return dataloader
+
+    def collate_fn_charxiv(self, batch):
+        # for quick evals
+        image_batch = []
+        query_batch = []
+        label_batch = []
+        machine_human_batch = []
+        
+        for idx in range(len(batch)):
+            image_batch.append(batch[idx]['image'])
+            query_batch.append(batch[idx]['query'])
+            label_batch.append(batch[idx]['label'][0])
+            machine_human_batch.append(batch[idx]['human_or_machine'])
+
+        return image_batch, query_batch, label_batch, machine_human_batch
+
+    def train_collate_fn_chartqa(self, examples): 
+        processor = self.processor  # Use the processor from the class instance, this is messy though #TODO
+        # For SFT/RL
+        # Get the texts and images, and apply the chat template
+        # st = time.time()
+        image_inputs = [process_vision_info(self.format_question(example))[0] for example in examples]
+
+        for example in examples:
+            example.pop('image')    # Remove the image key to avoid issues with the processor
+
+        texts = [processor.apply_chat_template(self.format_question_text_only(example), tokenize=False, add_generation_prompt=True) for example in examples]  # Prepare texts for processing
+        # Process the images to extract inputs
+        # just collect them into a list
+        # image_inputs = [[example['image']] for example in examples]
+
+        # Tokenize the texts and process the images
+        batch = processor(
+            text=texts, images=image_inputs, return_tensors="pt", padding=True
+        )  # Encode texts and images into tensors
+
+        batch["input_ids"] = batch["input_ids"]#.to(dtype=torch.long) 
+        # The labels are the input_ids, and we mask the padding tokens in the loss computation
+        labels = batch["input_ids"].clone()  # Clone input IDs for labels
+        labels[labels == processor.tokenizer.pad_token_id] = -100  # Mask padding tokens in labels
+
+        # Ignore the image token index in the loss computation (model specific)
+        if "qwen" in processor.__class__.__name__.lower():  # Check if the processor is Qwen2VLProcessor
+            # image_tokens = [151643, 151652, 151653, 151654, 151655, 151656]  # Specific image token IDs 
+            image_tokens = [151643, 151652, 151653, 151654, 151655]
+            # image_tokens = [processor.tokenizer.convert_tokens_to_ids(tok) for tok in processor.tokenizer.additional_special_tokens]
+        elif "intern" in processor.__class__.__name__.lower():
+            image_tokens = [92542, 92543, 92544, 92545, 92546]
+        else: #llava type models
+            image_tokens = [processor.tokenizer.convert_tokens_to_ids(processor.image_token)]  # Convert image token to ID
+
+        # Mask image token IDs in the labels
+        for image_token_id in image_tokens:
+            labels[labels == image_token_id] = -100  # Mask image token IDs in labels
+
+        batch["labels"] = labels  # Add labels to the batch
+        # logging.info("Time to process batch: ",time.time()   - st)  # Log the time taken for processing
+        breakpoint()
+        return batch  # Return the prepared batch
+
+    def format_question(self, example):
+        if "llava" in self.processor.__class__.__name__.lower():
+            return [
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "image",
+                        "image": example["image"],
+                    },
+                    {
+                        "type": "text",
+                        "text": example["query"],
+                    },
+                ],
+            },
+            {
+                "role": "assistant",
+                "content": [{"type": "text", "text": example["label"][0]}],
+            },]
+        else:
+            return [
+            {
+                "role": "system",
+                "content": [{"type": "text", "text": self.system_message}],
+            },
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "image",
+                        "image": example["image"],
+                    },
+                    {
+                        "type": "text",
+                        "text": example["query"],
+                    },
+                ],
+            },
+            {
+                "role": "assistant",
+                "content": [{"type": "text", "text": example["label"][0]}],
+            },]

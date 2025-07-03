@@ -17,7 +17,7 @@ def exact_match(pred, label):
 
 def _norm(text: str) -> str:
     """Case-fold, trim, collapse spaces."""
-    return re.sub(r'\s+', ' ', text.strip().lower())
+    return re.sub(r'\s+', ' ', text.strip().lower()[::-1].replace('.', '', 1)[::-1])
 
 def _is_num(t: str) -> bool:
     try:

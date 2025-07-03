@@ -1,4 +1,6 @@
 import os
+import pathlib
+import shutil
 
 import torch
 from torch.utils.data import DataLoader
@@ -58,6 +60,12 @@ def load_vlm_model(model_type):
         processor = InstructBlipProcessor.from_pretrained("Salesforce/blip2-flan-t5-xxl")
         model = AutoModelForVisualQuestionAnswering.from_pretrained("Salesforce/blip2-flan-t5-xxl", device_map="auto",cache_dir = cache_dir)
     
+    if model_type == "pali-3b":
+        model_name = "google/paligemma2-3b-mix-448"
+        processor = AutoProcessor.from_pretrained(model_name, device_map="auto",cache_dir = cache_dir)
+        model = AutoModelForImageTextToText.from_pretrained(model_name, device_map="auto",cache_dir = cache_dir)
+
+
     # For medium models (below 8b)
     if model_type == "instructblip-vicuna":
         processor = InstructBlipProcessor.from_pretrained("Salesforce/instructblip-vicuna-7b")
@@ -106,6 +114,22 @@ def load_vlm_model(model_type):
         model_name = "ahmed-masry/unichart-chartqa-960"
         model = VisionEncoderDecoderModel.from_pretrained(model_name).cuda()
         processor = DonutProcessor.from_pretrained(model_name)
+        # default_cfg = model.config_class()
+        # for k, v in default_cfg.to_dict().items():
+        #     model.config.__dict__.setdefault(k, v)
+        out_dir = pathlib.Path(cache_dir) / model_name
+        if out_dir.exists():
+            shutil.rmtree(out_dir)
+        model.save_pretrained(out_dir, safe_serialization=True)   # .safetensors + new config
+        processor.save_pretrained(out_dir)
+        model = VisionEncoderDecoderModel.from_pretrained(out_dir, torch_dtype="auto")
+        processor = AutoTokenizer.from_pretrained(out_dir)
+
+
+    if model_type == "chart-gemma":
+        model_type = "ahmed-masry/chartgemma"
+        model = AutoModelForImageTextToText.from_pretrained(model_type, device_map="auto",cache_dir = cache_dir)
+        processor = AutoProcessor.from_pretrained(model_type)
     
 
 

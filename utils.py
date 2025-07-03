@@ -3,13 +3,27 @@ import tqdm
 import re
 import time
 import gc
+import random
+
+seed = 2025
+random.seed(seed)
 
 import torch
 from qwen_vl_utils import process_vision_info
 
 
-def get_vlm_output(model, processor, image, query):
-    query =  [get_prompt_temp(q) for q in query]
+def get_vlm_output(model, processor, image, query, cot = False, icl_samples=None):
+    max_new_tokens = 200 if cot else 20 # To speed up inference when not cot
+    rationale = None # only used when cot=True
+
+    # For ICL
+    # if icl_samples is not None:
+    #     icl_prompt_prefix = get_icl_prompt_process() 
+        
+
+
+    # For batched inference
+    query =  [get_prompt_temp(q,cot) for q in query]
     messages = []
     for q,im in zip(query,image):
         if "llava" in model.__class__.__name__.lower():
@@ -42,16 +56,33 @@ def get_vlm_output(model, processor, image, query):
                     {"type": "text", "text": q},
                     {"type": "image", "image": im},
                 ],
-            }])
+            }])    
 
 
     
     if "llava" in model.__class__.__name__.lower():
         prompt = processor.apply_chat_template(messages, add_generation_prompt=True)
         inputs = processor(images=image, text=prompt, return_tensors="pt", padding=True).to(model.device)
-        output = model.generate(**inputs, max_new_tokens=50)
+        output = model.generate(**inputs, max_new_tokens=max_new_tokens)
         out_text = processor.batch_decode(output, skip_special_tokens=True)
         out_text = [o.split("[/INST]")[-1].strip() for o in out_text]
+        
+        if cot:
+            pred_text = [out.split("Answer:")[-1].strip() for out in out_text]
+            rationale = [out.split("Reason:")[-1].split("Answer:")[0].strip("\n") for out in out_text]
+            out_text = pred_text
+
+    elif "gemma" in model.__class__.__name__.lower():
+        # prompt = processor.apply_chat_template(messages, add_generation_prompt=True)
+        prompt = query
+        image = [img.convert("RGB") for img in image]
+        inputs = processor(images=image, text=prompt, return_tensors="pt", padding=True).to(model.device)
+        input_len = inputs["input_ids"].shape[-1]
+
+        # inputs = {k: v.to(model.device) for k, v in inputs.items()}
+        output = model.generate(**inputs, max_new_tokens=max_new_tokens, do_sample = False)
+        out_text = processor.batch_decode(output[:,input_len:], skip_special_tokens=True)
+        # out_text = [o.split(" ")[-1].strip() for o in out_text]
 
 
     if "qwen" in model.__class__.__name__.lower():
@@ -67,7 +98,7 @@ def get_vlm_output(model, processor, image, query):
         inputs = inputs.to(model.device)
 
         # Inference: Generation of the output
-        generated_ids = model.generate(**inputs, max_new_tokens=20)
+        generated_ids = model.generate(**inputs, max_new_tokens=max_new_tokens)
         generated_ids_trimmed = [
             out_ids[len(in_ids) :] for in_ids, out_ids in zip(inputs.input_ids, generated_ids)
         ]
@@ -75,7 +106,111 @@ def get_vlm_output(model, processor, image, query):
             generated_ids_trimmed, skip_special_tokens=True, clean_up_tokenization_spaces=False
         )
 
-    # elif "internvl" in model.__class__.__name__.lower():
+        if cot:
+            pred_text = [out.split("### Answer:")[-1].strip() for out in out_text]
+            rationale = [out.split("### Reason:")[-1].split("### Answer")[0].strip("\n") for out in out_text]
+            out_text = pred_text
+
+    return normalize_answer(out_text), rationale
+
+def get_prompt_temp(q, cot=False):
+    if cot:
+        prefix = ( " Look at the chart. Think step-by-step based on the question and chart. \n \
+                Generate a reasoning chain first and output it as Reason. \n \
+                In the next line, answer the question with a single phrase only a Answer and no units.\n \
+                Format:  \
+                ### Question: {question} \
+                ### Reason: \
+                step-1 … \
+                step-2 … \
+                ### Answer: \n")
+        
+        prefix = prefix.format(question=q)
+    else:
+        # prefix = "Look at the chart. %s Answer with a single phrase only."%q
+        # For weird PaliGemma models
+        prefix = "answer en Look at the chart. %s Answer with a single phrase only.\n"%q
+        # prefix = "Look at the chart. %s Answer with one word only no other text."%q
+        # prefix = "Look at the chart. %s. Answer in 100 words or fewer."%q
+    return prefix
+
+def normalize_answer(answer):
+    """Lower text and remove punctuation, articles and extra whitespace."""
+    text = []
+    for ans in answer:
+        ans = str(ans)
+        # Keep only alphanumerics and spaces
+        ans = re.sub(r'[^A-Za-z0-9 .]+', '', ans)
+        text.append(ans.strip().lower())
+    return text
+
+def clear_memory():
+    # Delete variables if they exist in the current global scope
+    if "inputs" in globals():
+        del globals()["inputs"]
+    if "model" in globals():
+        del globals()["model"]
+    if "processor" in globals():
+        del globals()["processor"]
+    if "trainer" in globals():
+        del globals()["trainer"]
+    if "peft_model" in globals():
+        del globals()["peft_model"]
+    if "bnb_config" in globals():
+        del globals()["bnb_config"]
+    time.sleep(2)
+
+    # Garbage collection and clearing CUDA memory
+    gc.collect()
+    time.sleep(2)
+    torch.cuda.empty_cache()
+    torch.cuda.synchronize()
+    time.sleep(2)
+    gc.collect()
+    time.sleep(2)
+
+    print(f"GPU allocated memory: {torch.cuda.memory_allocated() / 1024**3:.2f} GB")
+    print(f"GPU reserved memory: {torch.cuda.memory_reserved() / 1024**3:.2f} GB")
+
+def format_data(sample):
+    return [
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "image",
+                    "image": sample["image"],
+                },
+                {
+                    "type": "text",
+                    "text": sample["query"],
+                },
+            ],
+        },
+        {
+            "role": "assistant",
+            "content": [{"type": "text", "text": sample["label"][0]}],
+        },
+    ]
+
+
+
+
+def select_icl_samples(train_dataset, k=5):
+    # Select k random samples from the training dataset for in-context learning
+    # Here, we simply select the first k samples for reproducibility
+    select_list = random.sample(range(len(train_dataset)), k)
+    selected_samples = []
+    for i in select_list:
+        selected_samples.append(train_dataset[i])
+    return selected_samples
+
+
+
+
+
+
+  # elif "internvl" in model.__class__.__name__.lower():
     #     from internvl_utils import build_transform, find_closest_aspect_ratio, dynamic_preprocess, load_image, get_conv_template
     #     generation_config = {"num_beams":1,"max_new_tokens":100}
     #     question =  "<image> "+ get_prompt_temp(query[0])
@@ -155,72 +290,7 @@ def get_vlm_output(model, processor, image, query):
     #     sequence = sequence.split("<s_answer>")[1].strip()
 
     #     out_text = sequence
-        
-    return normalize_answer(out_text)
 
-def get_prompt_temp(q):
-    prefix = "Look at the chart. %s Answer with a single phrase only."%q
-    # prefix = "Look at the chart. %s. Answer in 100 words or fewer."%q
-    return prefix
-
-def normalize_answer(answer):
-    """Lower text and remove punctuation, articles and extra whitespace."""
-    text = []
-    for ans in answer:
-        ans = str(ans)
-        # Keep only alphanumerics and spaces
-        ans = re.sub(r'[^A-Za-z0-9 .]+', '', ans)
-        text.append(ans.strip().lower())
-    return text
-
-def clear_memory():
-    # Delete variables if they exist in the current global scope
-    if "inputs" in globals():
-        del globals()["inputs"]
-    if "model" in globals():
-        del globals()["model"]
-    if "processor" in globals():
-        del globals()["processor"]
-    if "trainer" in globals():
-        del globals()["trainer"]
-    if "peft_model" in globals():
-        del globals()["peft_model"]
-    if "bnb_config" in globals():
-        del globals()["bnb_config"]
-    time.sleep(2)
-
-    # Garbage collection and clearing CUDA memory
-    gc.collect()
-    time.sleep(2)
-    torch.cuda.empty_cache()
-    torch.cuda.synchronize()
-    time.sleep(2)
-    gc.collect()
-    time.sleep(2)
-
-    print(f"GPU allocated memory: {torch.cuda.memory_allocated() / 1024**3:.2f} GB")
-    print(f"GPU reserved memory: {torch.cuda.memory_reserved() / 1024**3:.2f} GB")
-
-def format_data(sample):
-    return [
-        {
-            "role": "user",
-            "content": [
-                {
-                    "type": "image",
-                    "image": sample["image"],
-                },
-                {
-                    "type": "text",
-                    "text": sample["query"],
-                },
-            ],
-        },
-        {
-            "role": "assistant",
-            "content": [{"type": "text", "text": sample["label"][0]}],
-        },
-    ]
 
 
 
