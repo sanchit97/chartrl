@@ -9,9 +9,10 @@ Repo for RL post-training on Chart data
 | Llava-Next (7 B)          | Base      | 51.12        | 39.38       |
 | Llava-Next (7 B)          | SFT       | 66.12        |             |
 | Llava-Next (7 B)          | DPO - factuality| 66.36  |             |
-| Qwen-2VL-Instruct         | Base      | 71.48        | 61.12       |
-| Qwen-2VL-Instruct         | SFT       | 69.44        |             |
-| Qwen-2VL-Instruct         | DPO - factuality| 71.92  |             |
+| Qwen-2VL-Instruct         | Base (COT)     | 69.96        | 61.12       |
+| Qwen-2VL-Instruct         | SFT  (COT)     | 69.44*        |             |
+| Qwen-2VL-Instruct         | DPO - factuality (COT)| 70.16  |             |
+| Qwen-2VL-Instruct         | DPO - all | 72.24  |             |
 
 ## Loss ablations for DPO
 
