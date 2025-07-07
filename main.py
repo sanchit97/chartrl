@@ -64,11 +64,22 @@ def main():
     model, processor = load_vlm_model(args.vlm_name)
     logging.info("Loaded model and processor")
 
+    if args.mode == "sft" or args.mode == "dpo":
+        # Set the PEFT 
+        if args.vlm_name == "qwen-7b":
+                target_modules=["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"]
+        elif args.vlm_name == "internvl-8b":
+            target_modules=["wqkv", "wo", "w1", "w2", "w3"]
+        else:
+            target_modules = None # This targets all possible layers/modules (llava type models, maybe pali #TODO check)
+
     if args.dataset_name == "chartqa":
         dataset = ChartDataset("chartqa", processor=processor)
         test_dataset = dataset.load_chart_dataset(split = "test")
-        if args.icl:
+        if args.mode == "sft" or args.icl:
             train_dataset = dataset.load_chart_dataset(split = "train")
+        if args.mode == "sft":
+            eval_dataset = dataset.load_chart_dataset(split = "val") 
 
     elif args.dataset_name == "chartqapro":
         dataset = ChartDataset("chartqapro", processor=processor)
@@ -99,15 +110,6 @@ def main():
         if args.icl:
             train_dataset = dataset.load(split = "train")
 
-    # elif args.dataset_name == "all-ra":
-    #     dataset = ChartDataset("chartqa", processor=processor)
-    #     test_dataset_chartqa = dataset.load_chart_dataset(split = "test")
-    #     dataset = PlotQADataset("plotqa", processor=processor)
-    #     test_dataset = dataset.load_plotqa_dataset(split = "test")
-    #     test_dataset = test_dataset.shuffle(seed=seed)
-    #     test_dataset_plotqa = test_dataset.select(range(5000))
-    #     dataset = ChartDataset("figqa", processor=processor)
-    #     test_dataset_figqa = dataset.load_chart_dataset(split = "test")
 
     
     # Load the model and processor
@@ -151,7 +153,7 @@ def main():
         logging.info("Starting evaluation on {} samples".format(len(test_dataset)))
         logging.info("Using CoT: {}".format(args.cot))
 
-        loader = dataset.create_loader(test_dataset, bsz=4)
+        loader = dataset.create_loader(test_dataset, bsz=32)
 
         if args.icl:
             path = "./icl-examples/"+args.dataset_name+"-icl_samples.pkl"
@@ -218,33 +220,6 @@ def main():
     if args.mode == "sft":
         os.environ["WANDB_CONSOLE"] = "wrap" 
         wandb.init(project="chartrl", entity="chartrl")
-        # Load the dataset and model for SFT
-        model_name = "llava-1.6"  # Change to the desired model name
-        # model_name = "qwen-7b"
-        # model_name = "internvl-8b"
-        model, processor = load_vlm_model(model_name)
-
-
-        # dataset = ChartDataset("chartqa", processor=processor)
-        # train_dataset = dataset.load_chart_dataset(split = "train")
-        # eval_dataset = dataset.load_chart_dataset(split = "val")
-
-        
-        # dataset = PlotQADataset("plotqa", processor=processor)
-        # train_dataset = dataset.load_plotqa_dataset(split = "train")
-        # train_dataset = train_dataset.shuffle(seed=seed, keep_in_memory=True)
-        # train_dataset = train_dataset.select(range(50000))
-        # eval_dataset = dataset.load_plotqa_dataset(split = "validation")
-        # eval_dataset = eval_dataset.shuffle(seed=seed, keep_in_memory=True)
-        # eval_dataset = eval_dataset.select(range(5000))
-
-
-        dataset = ChartToTextDataset("chartqa", processor=processor)
-        train_dataset = dataset.load(split = "train")
-        eval_dataset = dataset.load(split = "test")
-
-        # train_dataset = [format_data(sample) for sample in train_dataset]
-        # eval_dataset = [format_data(sample) for sample in eval_dataset]
 
         logging.info("Loaded model, train and eval datasets")
         logging.info("Using:", model.config._attn_implementation)
@@ -254,15 +229,16 @@ def main():
                     bnb_4bit_use_double_quant=True, 
                     bnb_4bit_quant_type="nf4", 
                     bnb_4bit_compute_dtype=torch.bfloat16)
-                    
+        
+        
+        
+
         peft_config = LoraConfig(
-                    lora_alpha=16,
+                    lora_alpha=256,
                     lora_dropout=0.05,
-                    r=8,
+                    r=256,
                     bias="none",
-                    # target_modules=["q_proj", "v_proj"],
-                    target_modules=["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
-                    # target_modules = ["wqkv", "wo"],
+                    target_modules = target_modules,
                     task_type="CAUSAL_LM",)
 
 
@@ -272,7 +248,7 @@ def main():
         logging.info("Loaded model+LORA adapters")
 
         training_args = SFTConfig(
-            output_dir=model_name+"-base-train-charttotext",  # Directory to save the model
+            output_dir=args.vlm_name+"-sft-train"+args.dataset_name,  # Directory to save the model
             num_train_epochs=3,  # Number of training epochs
             per_device_train_batch_size=4,  # Batch size for training
             per_device_eval_batch_size=4,  # Batch size for evaluation
@@ -319,10 +295,12 @@ def main():
             train_dataset=train_dataset,
             eval_dataset=eval_dataset,
             # data_collator=dataset.train_collate_fn_plotqa,
-            # data_collator=dataset.train_collate_fn_chartqa,
-            data_collator=dataset.train_collate_fn_charttotext,
+            data_collator=dataset.train_collate_fn_chartqa,
+            # data_collator=dataset.train_collate_fn_charttotext,
             peft_config=peft_config,
-            tokenizer=processor.tokenizer,
+            # tokenizer=processor.tokenizer,
+            tokenizer=processor,
+
         )
 
         
@@ -373,6 +351,8 @@ def main():
         # pref_dataset = pref_dataset.map(dataset.pref_format, batched=True, batch_size=32, num_proc=4)
         # train_dataset = dataset.load_chart_dataset(split = "train")
         # eval_dataset = dataset.load_pref_data()[:200]
+
+        breakpoint()
 
         lossname = "hinge"
         logging.info("Loaded model, pref and eval datasets")
@@ -432,3 +412,35 @@ main()
 
 
 
+# elif args.dataset_name == "all-ra":
+    #     dataset = ChartDataset("chartqa", processor=processor)
+    #     test_dataset_chartqa = dataset.load_chart_dataset(split = "test")
+    #     dataset = PlotQADataset("plotqa", processor=processor)
+    #     test_dataset = dataset.load_plotqa_dataset(split = "test")
+    #     test_dataset = test_dataset.shuffle(seed=seed)
+    #     test_dataset_plotqa = test_dataset.select(range(5000))
+    #     dataset = ChartDataset("figqa", processor=processor)
+    #     test_dataset_figqa = dataset.load_chart_dataset(split = "test")
+
+    # Load the dataset and model for SFT
+
+        # dataset = ChartDataset("chartqa", processor=processor)
+        # train_dataset = dataset.load_chart_dataset(split = "train")
+        # eval_dataset = dataset.load_chart_dataset(split = "val")
+
+        
+        # dataset = PlotQADataset("plotqa", processor=processor)
+        # train_dataset = dataset.load_plotqa_dataset(split = "train")
+        # train_dataset = train_dataset.shuffle(seed=seed, keep_in_memory=True)
+        # train_dataset = train_dataset.select(range(50000))
+        # eval_dataset = dataset.load_plotqa_dataset(split = "validation")
+        # eval_dataset = eval_dataset.shuffle(seed=seed, keep_in_memory=True)
+        # eval_dataset = eval_dataset.select(range(5000))
+
+
+        # dataset = ChartToTextDataset("chartqa", processor=processor)
+        # train_dataset = dataset.load(split = "train")
+        # eval_dataset = dataset.load(split = "test")
+
+        # train_dataset = [format_data(sample) for sample in train_dataset]
+        # eval_dataset = [format_data(sample) for sample in eval_dataset]

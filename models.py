@@ -84,8 +84,8 @@ def load_vlm_model(model_type):
         # processor = AutoProcessor.from_pretrained("Qwen/Qwen2-VL-7B")
         # model = AutoModelForImageTextToText.from_pretrained("Qwen/Qwen2-VL-7B", device_map="auto",cache_dir = cache_dir, attn_implementation = "flash_attention_2", torch_dtype=torch.bfloat16)
     if model_type == "internvl-8b":
-        processor = AutoTokenizer.from_pretrained("OpenGVLab/InternVL2_5-8B", device_map="auto",cache_dir = cache_dir, trust_remote_code=True)
-        model = AutoModel.from_pretrained("OpenGVLab/InternVL2_5-8B", device_map="auto",cache_dir = cache_dir, trust_remote_code=True)
+        processor = AutoTokenizer.from_pretrained("OpenGVLab/InternVL2_5-8B", device_map="auto",cache_dir = cache_dir, trust_remote_code=True,torch_dtype=torch.bfloat16)
+        model = AutoModel.from_pretrained("OpenGVLab/InternVL2_5-8B", device_map="auto",cache_dir = cache_dir, trust_remote_code=True,torch_dtype=torch.bfloat16)
 
     # For big models (above 13-15b)
     if model_type == "instructblip-xxl": #prob 13b

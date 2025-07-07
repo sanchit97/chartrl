@@ -9,7 +9,11 @@ seed = 2025
 random.seed(seed)
 
 import torch
+
+# for processing qwen image 
 from qwen_vl_utils import process_vision_info
+# for processinf internvl image
+from internvl_utils import get_conv_template, load_image
 
 
 def get_vlm_output(model, processor, image, query, cot = False, icl_samples=None):
@@ -19,8 +23,6 @@ def get_vlm_output(model, processor, image, query, cot = False, icl_samples=None
     # For ICL
     # if icl_samples is not None:
     #     icl_prompt_prefix = get_icl_prompt_process() 
-        
-
 
     # For batched inference
     query =  [get_prompt_temp(q,cot) for q in query]
@@ -58,8 +60,12 @@ def get_vlm_output(model, processor, image, query, cot = False, icl_samples=None
                 ],
             }])    
 
+        elif "internvl" in model.__class__.__name__.lower():
+            messages.append("<image>\n " + q)
 
     
+
+    # Every model has a different way of processing the input and decoding. This is messy but works. #TODO
     if "llava" in model.__class__.__name__.lower():
         prompt = processor.apply_chat_template(messages, add_generation_prompt=True)
         inputs = processor(images=image, text=prompt, return_tensors="pt", padding=True).to(model.device)
@@ -85,7 +91,7 @@ def get_vlm_output(model, processor, image, query, cot = False, icl_samples=None
         # out_text = [o.split(" ")[-1].strip() for o in out_text]
 
 
-    if "qwen" in model.__class__.__name__.lower():
+    elif "qwen" in model.__class__.__name__.lower():
         text = processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
         image_inputs, video_inputs = process_vision_info(messages)
         inputs = processor(
@@ -111,6 +117,63 @@ def get_vlm_output(model, processor, image, query, cot = False, icl_samples=None
             rationale = [out.split("### Reason:")[-1].split("### Answer")[0].strip("\n") for out in out_text]
             out_text = pred_text
 
+
+    elif "internvl" in model.__class__.__name__.lower():
+        # Constants
+        history=None
+        history = [] if history is None else history
+        num_patches_list=None 
+        IMG_START_TOKEN='<img>' 
+        IMG_END_TOKEN='</img>'
+        IMG_CONTEXT_TOKEN='<IMG_CONTEXT>'
+        # Loading images in list and sanity
+        pixel_values = [load_image(img) for img in image]
+        if num_patches_list is None:
+            num_patches_list = [pxl.shape[0] for pxl in pixel_values]
+        # print(f"Mismatch! - check inference function internvl")
+        assert len(pixel_values) == sum(num_patches_list)
+        # Setting up model specific things
+        img_context_token_id = processor.convert_tokens_to_ids(IMG_CONTEXT_TOKEN)
+        model.img_context_token_id = img_context_token_id
+        
+        query = []
+        for question in messages:
+            template = get_conv_template(model.template)
+            template.system_message = model.system_message
+            eos_token_id = processor.convert_tokens_to_ids(template.sep.strip())
+            template.append_message(template.roles[0], question)
+            template.append_message(template.roles[1], None)
+            query.append(template.get_prompt())
+
+        # Verified up until here (the prompts are formatted correctly)
+
+        for i,num_patches in enumerate(num_patches_list):
+            image_tokens = IMG_START_TOKEN + IMG_CONTEXT_TOKEN * model.num_image_token * num_patches + IMG_END_TOKEN
+            query[i] = query[i].replace('<image>', image_tokens, 1)
+
+
+        generation_config = {}
+        model_inputs = processor(query, return_tensors='pt',padding=True)
+        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        input_ids = model_inputs['input_ids'].to(device)#.to(torch.bfloat16)
+        attention_mask = model_inputs['attention_mask'].to(device)#.to(torch.bfloat16)
+        pixel_values = torch.stack(pixel_values, dim=1).squeeze(0).to(device).to(torch.bfloat16)
+        generation_config['eos_token_id'] = eos_token_id
+
+       
+        outputs = model.generate(pixel_values=pixel_values,
+                                input_ids=input_ids,
+                                attention_mask=attention_mask,
+                                **generation_config,
+                                max_new_tokens=max_new_tokens)
+        
+        out_text = processor.batch_decode(outputs, skip_special_tokens=True)
+        # breakpoint()
+        if cot:
+            pred_text = [out.split("### Answer:")[-1].strip() for out in out_text]
+            rationale = [out.split("### Reason:")[-1].split("### Answer")[0].strip("\n") for out in out_text]
+            out_text = pred_text
+
     return normalize_answer(out_text), rationale
 
 def get_prompt_temp(q, cot=False):
@@ -121,15 +184,18 @@ def get_prompt_temp(q, cot=False):
                 Format:  \
                 ### Question: {question} \
                 ### Reason: \
-                step-1 … \
-                step-2 … \
+                step-1 ... \
+                step-2 ... \
+                ....\
+                step-n ... \
                 ### Answer: \n")
         
         prefix = prefix.format(question=q)
     else:
-        # prefix = "Look at the chart. %s Answer with a single phrase only."%q
-        # For weird PaliGemma models
-        prefix = "answer en Look at the chart. %s Answer with a single phrase only.\n"%q
+        prefix = "Look at the chart. %s Answer with a single phrase only."%q
+        # For weird PaliGemma models (they require an instruction format of form "answer en")
+        # prefix = "answer en Look at the chart. %s Answer with a single phrase only.\n"%q
+
         # prefix = "Look at the chart. %s Answer with one word only no other text."%q
         # prefix = "Look at the chart. %s. Answer in 100 words or fewer."%q
     return prefix
@@ -294,39 +360,3 @@ def select_icl_samples(train_dataset, k=5):
 
 
 
-
-
-# from trl.trainer.dpo_trainer import _get_batch_logps as get_batch_logps
-
-# class DPOTrainerWithKL(DPOTrainer):
-#     def compute_loss(
-#         self,
-#         model,
-#         inputs,
-#         return_outputs: bool = False,
-#         **kwargs            # ← catch any future extras
-#     ):
-#         # call parent (keeps internal tensors in loss_dict)
-#         loss, loss_dict = super().compute_loss(
-#             model, inputs, return_outputs=True, **kwargs
-#         )
-#         # breakpoint()
-#         # sequence-level KL: policy – reference on the chosen response
-
-#         pi_logp_c = loss_dict["logps/chosen"]      # (B,)
-#         pi_logp_r = loss_dict["logps/rejected"]
-
-#         with torch.no_grad():
-#             ref_logp_c, ref_logp_r = self._get_batch_logps(
-#                 self.ref_model,
-#                 inputs["input_ids"],
-#                 inputs["attention_mask"],
-#                 inputs["labels"],                # same labels tensor DPO passes
-#             )
-        
-#         kl = (pi_logp_c - ref_logp_c).mean()
-
-#         # log to HF Trainer’s logger (wandb / TB / CSV)
-#         self.log({"train/kl_divergence": kl})
-
-#         return (loss, loss_dict) if return_outputs else loss
