@@ -15,8 +15,8 @@ from datasets import Dataset
 from models import load_vlm_model
 
 dset = "/mnt/home/sanchit/rl-chart/gt-tables/ChartQA/ChartQA Dataset/train/"
-# model, processor = load_vlm_model("qwen-7b")
-model, processor = load_vlm_model("llava-1.6")
+model, processor = load_vlm_model("qwen-7b")
+# model, processor = load_vlm_model("llava-1.6")
 
 # --------------------------------------------------------------------
 #  Core helper
@@ -136,24 +136,48 @@ def _first_cross(x: pd.Series) -> Any:
 def bar_questions(df: pd.DataFrame) -> List[Dict[str, Any]]:
     cat, val = df['category'], df['value']
     q = [
-        {"question": "Which bar is tallest?", 
-         "answer": cat.iloc[val.idxmax()],
-         "not_answer": cat.iloc[val.idxmin()]},
-        {"question": "Which bar is shortest?", 
-         "answer": cat.iloc[val.idxmin()],
-         "not_answer": cat.iloc[val.idxmax()]},
-        {"question": "What is the difference between the tallest and shortest bars?",
-         "answer": float(val.max() - val.min()),
-         "not_answer": float(val.min() - val.max())},
-        {"question": "Give the average height of all bars.", 
-         "answer": float(val.mean()),
-         "not_answer": float(val.mean()+1)},
-        {"question": "How many bars exceed the mean height?", 
-         "answer": int((val > val.mean()).sum()),
-         "not_answer": int((val < val.mean()).sum())},
-        {"question": "Rank the bars from highest to lowest.", 
-         "answer": _rank_desc(val),
-         "not_answer": _rank_desc(val)[::-1]}
+         {
+            "question": "Which bar is tallest?",
+            "answer": cat.iloc[val.idxmax()],
+            "answer_rationale": ["identify highest bar height", "output its category label for reference"],
+            "not_answer": cat.iloc[val.idxmin()],
+            "not_answer_rationale": ["identify lowest bar height", "output its category label for reference"],
+        },
+        {
+            "question": "Which bar is shortest?",
+            "answer": cat.iloc[val.idxmin()],
+            "answer_rationale": ["identify lowest bar height", "output its category label for reference"],
+            "not_answer": cat.iloc[val.idxmax()],
+            "not_answer_rationale": ["identify highest bar height", "output its category label for reference"],
+        },
+        {
+            "question": "What is the difference between the tallest and shortest bars?",
+            "answer": float(val.max() - val.min()),
+            "answer_rationale": ["subtract smallest bar height from tallest", "return difference numeric value"],
+            "not_answer": float(val.min() - val.max()),
+            "not_answer_rationale": ["subtract tallest bar height from smallest", "return difference numeric value"],
+        },
+        {
+            "question": "Give the average height of all bars.",
+            "answer": float(val.mean()),
+            "answer_rationale": ["sum all bar heights", "divide by count, return mean numeric value"],
+            "not_answer": float(val.mean() + 1),
+            "not_answer_rationale": ["sum heights divide by count add one", "return offset numeric value"],
+        },
+        {
+            "question": "How many bars exceed the mean height?",
+            "answer": int((val > val.mean()).sum()),
+            "answer_rationale": ["count bars exceeding mean height", "output integer total of bars"],
+            "not_answer": int((val < val.mean()).sum()),
+            "not_answer_rationale": ["count bars below mean height", "output integer total of bars"],
+        },
+        {
+            "question": "Rank the bars from highest to lowest.",
+            "answer": _rank_desc(val),
+            "answer_rationale": ["sort bar heights descending", "return ordered list of category labels"],
+            "not_answer": _rank_desc(val)[::-1],
+            "not_answer_rationale": ["sort bar heights ascending", "return ordered list of category labels"],
+        },
     ]
     return q
 
@@ -165,24 +189,48 @@ def pie_questions(df: pd.DataFrame) -> List[Dict[str, Any]]:
     pct = (val[cat == c0].iloc[0] / total * 100).round(2)
     combined = (val[cat.isin([c0, c1])].sum() / total * 100).round(2)
     q = [
-        {"question": "Which slice is largest?", 
-         "answer": cat.iloc[val.idxmax()],
-         "not_answer": cat.iloc[val.idxmin()]},
-        {"question": f"What percentage of the pie is {c0}?", 
-         "answer": float(pct),
-         "not_answer": float((100 - pct).round(2))},
-        {"question": "What is the second-smallest slice?", 
-         "answer": cat.iloc[val.nsmallest(2).idxmax()],
-         "not_answer": cat.iloc[val.idxmax()]},
-        {"question": "How many slices are below 10 %?", 
-         "answer": int((val / total * 100 < 10).sum()),
-         "not_answer": int((val / total * 100 > 10).sum())},
-        {"question": f"What is the combined share of {c0} and {c1}?",
-         "answer": float(combined),
-         "not_answer": float((100 - combined).round(2))},
-        {"question": "Does any slice exceed 50 % of the pie?",
-         "answer": bool((val / total * 100 > 50).any()),
-         "not_answer": bool((val / total * 100 <= 50).all())}
+        {
+            "question": "Which slice is largest?",
+            "answer": cat.iloc[val.idxmax()],
+            "answer_rationale": ["identify slice with maximum value", "output corresponding category label"],
+            "not_answer": cat.iloc[val.idxmin()],
+            "not_answer_rationale": ["identify slice with minimum value", "output corresponding category label"],
+        },
+        {
+            "question": f"What percentage of the pie is {c0}?",
+            "answer": float(pct),
+            "answer_rationale": ["divide category value by total", "multiply hundred, round percentage number"],
+            "not_answer": float(round(100 - pct, 2)),
+            "not_answer_rationale": ["subtract category percentage from hundred", "output complementary percentage number"],
+        },
+        {
+            "question": "What is the second-smallest slice?",
+            "answer": cat.iloc[val.nsmallest(2).idxmax()],
+            "answer_rationale": ["sort slice values ascending", "select second entry, output category label"],
+            "not_answer": cat.iloc[val.idxmax()],
+            "not_answer_rationale": ["select slice with largest value", "output category label as alternative"],
+        },
+        {
+            "question": "How many slices are below 10 %?",
+            "answer": int((val / total * 100 < 10).sum()),
+            "answer_rationale": ["compute slice percentages", "count those under ten, return integer count"],
+            "not_answer": int((val / total * 100 > 10).sum()),
+            "not_answer_rationale": ["compute slice percentages", "count those over ten, return integer count"],
+        },
+        {
+            "question": f"What is the combined share of {c0} and {c1}?",
+            "answer": float(combined),
+            "answer_rationale": ["sum two category values, divide by total", "multiply hundred, round"],
+            "not_answer": float(round(100 - combined, 2)),
+            "not_answer_rationale": ["subtract combined percentage from hundred", "output complementary percentage"],
+        },
+        {
+            "question": "Does any slice exceed 50 % of the pie?",
+            "answer": bool((val / total * 100 > 50).any()),
+            "answer_rationale": ["check if any slice percentage above fifty", "return boolean value"],
+            "not_answer": bool((val / total * 100 <= 50).all()),
+            "not_answer_rationale": ["check if all slice percentages at most fifty", "return boolean value"],
+        },
     ]
     return q
 
@@ -193,24 +241,57 @@ def grouped_bar_questions(df: pd.DataFrame) -> List[Dict[str, Any]]:
     q = []
     # Choose the first group / category deterministically
     g0, c0 = g.unique()[0], cat.unique()[0]
-    q.append({"question": f"In group {g0}, which category bar is tallest?",
-              "answer": cat[g == g0].iloc[val[g == g0].idxmax()]})
-    q.append({"question": f"In group {g0}, what is the total bar height?",
-              "answer": float(val[g == g0].sum())})
-    q.append({"question": "Across all groups, which category has the highest single bar value?",
-              "answer": cat.iloc[val.idxmax()]})
-    q.append({"question": "Which group’s average bar height is lowest?",
-              "answer": group_means.idxmin()})
-    q.append({"question": f"For category {c0}, what is the range across groups?",
-              "answer": float((val[cat == c0].groupby(g).max() -
-                               val[cat == c0].groupby(g).min()).max())})
-    q.append({"question": "List groups ordered by their total bar height.",
-              "answer": _rank_desc(group_sums)})
+    q = [
+         {
+            "question": f"In group {g0}, which category bar is tallest?",
+            "answer": cat[g == g0].iloc[val[g == g0].idxmax()],
+            "answer_rationale": ["filter bars in group", "pick max value, output category label"],
+            "not_answer": cat[g == g0].iloc[val[g == g0].idxmin()],
+            "not_answer_rationale": ["filter bars in group", "pick min value, output category label"],
+        },
+        {
+            "question": f"In group {g0}, what is the total bar height?",
+            "answer": float(val[g == g0].sum()),
+            "answer_rationale": ["sum category bar heights within group", "return total height value"],
+            "not_answer": float(val[g == g0].min()),
+            "not_answer_rationale": ["select smallest single bar height within group", "return numeric value"],
+        },
+        {
+            "question": "Across all groups, which category has the highest single bar value?",
+            "answer": cat.iloc[val.idxmax()],
+            "answer_rationale": ["find global max bar value", "return its category label identifier"],
+            "not_answer": cat.iloc[val.idxmin()],
+            "not_answer_rationale": ["find global min bar value", "return its category label identifier"],
+        },
+        {
+            "question": "Which group’s average bar height is lowest?",
+            "answer": group_means.idxmin(),
+            "answer_rationale": ["compute mean height per group", "choose lowest mean, output group name"],
+            "not_answer": group_means.idxmax(),
+            "not_answer_rationale": ["compute mean height per group", "choose highest mean, output group name"],
+        },
+        {
+            "question": f"For category {c0}, what is the range across groups?",
+            "answer": float((val[cat == c0].groupby(g).max() - val[cat == c0].groupby(g).min()).max()),
+            "answer_rationale": ["find category max minus min across groups", "output range numeric value"],
+            "not_answer": float(val[cat == c0].groupby(g).mean().max()),
+            "not_answer_rationale": ["compute category mean across groups", "output highest mean numeric value"],
+        },
+        {
+            "question": "List groups ordered by their total bar height.",
+            "answer": _rank_desc(group_sums),
+            "answer_rationale": ["sum bar heights per group", "sort totals descending, output group list"],
+            "not_answer": _rank_desc(group_sums)[::-1],
+            "not_answer_rationale": ["sum bar heights per group", "sort totals ascending, output group list"],
+        },
+    ]
+    
     return q
 
 # -----------------------------------------------------------------
 #  Histogram
 # -----------------------------------------------------------------
+
 def histogram_questions(df: pd.DataFrame, bins: int = 10) -> List[Dict[str, Any]]:
     v = df['value']
     counts, bin_edges = np.histogram(v, bins=bins)
@@ -218,24 +299,48 @@ def histogram_questions(df: pd.DataFrame, bins: int = 10) -> List[Dict[str, Any]
     min_bin_idx = counts.argmin()
 
     q = [
-        {"question": "What is the bin with the most observations?",
-         "answer": (float(bin_edges[max_bin_idx]), float(bin_edges[max_bin_idx + 1])),
-         "not_answer": (float(bin_edges[min_bin_idx]), float(bin_edges[min_bin_idx + 1]))},
-        {"question": "How many values fall below the median?",
-         "answer": int((v < v.median()).sum()),
-         "not_answer": int((v >= v.median()).sum())},
-        {"question": "What is the mean of the data?",
-         "answer": float(v.mean()),
-         "not_answer": float(v.mean() + 1)},
-        {"question": "What is the inter-quartile range?",
-         "answer": float(v.quantile(0.75) - v.quantile(0.25)),
-         "not_answer": float((v.quantile(0.90) - v.quantile(0.10)))},   # a wider range
-        {"question": "How many values are above 1 SD from the mean?",
-         "answer": int((v > v.mean() + v.std()).sum()),
-         "not_answer": int((v < v.mean() - v.std()).sum())},
-        {"question": "Does the distribution look right-skewed?",
-         "answer": bool(v.skew() > 0),
-         "not_answer": bool(v.skew() <= 0)}
+        {
+            "question": "What is the bin with the most observations?",
+            "answer": (float(bin_edges[max_bin_idx]), float(bin_edges[max_bin_idx + 1])),
+            "answer_rationale": ["create histogram counts", "locate bin highest count, output edge interval"],
+            "not_answer": (float(bin_edges[min_bin_idx]), float(bin_edges[min_bin_idx + 1])),
+            "not_answer_rationale": ["locate bin lowest count", "output corresponding interval edges pair"],
+        },
+        {
+            "question": "How many values fall below the median?",
+            "answer": int((v < v.median()).sum()),
+            "answer_rationale": ["count data values below median threshold", "return integer count total"],
+            "not_answer": int((v >= v.median()).sum()),
+            "not_answer_rationale": ["count data values at or above median", "return integer count"],
+        },
+        {
+            "question": "What is the mean of the data?",
+            "answer": float(v.mean()),
+            "answer_rationale": ["sum values, divide by count", "return dataset mean numeric value"],
+            "not_answer": float(v.mean() + 1),
+            "not_answer_rationale": ["sum values, divide by count", "add one offset, return value"],
+        },
+        {
+            "question": "What is the inter‑quartile range?",
+            "answer": float(v.quantile(0.75) - v.quantile(0.25)),
+            "answer_rationale": ["subtract first quartile from third quartile", "output inter‑quartile range"],
+            "not_answer": float(v.quantile(0.90) - v.quantile(0.10)),
+            "not_answer_rationale": ["compute tenth to ninetieth percentile spread", "output wider numeric range"],
+        },
+        {
+            "question": "How many values are above 1 SD from the mean?",
+            "answer": int((v > v.mean() + v.std()).sum()),
+            "answer_rationale": ["count values exceeding mean", "plus one standard deviation, return total"],
+            "not_answer": int((v < v.mean() - v.std()).sum()),
+            "not_answer_rationale": ["count values below mean", "minus one standard deviation, return total"],
+        },
+        {
+            "question": "Does the distribution look right‑skewed?",
+            "answer": bool(v.skew() > 0),
+            "answer_rationale": ["calculate skewness statistic", "check positive sign, return boolean right‑skew"],
+            "not_answer": bool(v.skew() <= 0),
+            "not_answer_rationale": ["calculate skewness statistic", "check nonpositive sign, return boolean"],
+        },
     ]
     return q
 
@@ -252,24 +357,48 @@ def line_questions(df: pd.DataFrame) -> List[Dict[str, Any]]:
     not_exceed = x.iloc[y.idxmin()] if exceed_idx is not None else x.iloc[0]
 
     q = [
-        {"question": "At which x does the line reach its maximum y?",
-         "answer": x.iloc[y.idxmax()],
-         "not_answer": x.iloc[y.idxmin()]},
-        {"question": "What is the largest single-step increase in y?",
-         "answer": float(diff.max()),
-         "not_answer": float(diff.min())},
-        {"question": f"In which x-interval does y first exceed its mean ({thr:.2f})?",
-         "answer": x.iloc[exceed_idx] if exceed_idx is not None else None,
-         "not_answer": not_exceed},
-        {"question": "What is the average y over the whole series?",
-         "answer": float(y.mean()),
-         "not_answer": float(y.mean() + 1)},
-        {"question": "Is the overall trend positive?",
-         "answer": bool(y.iloc[-1] > y.iloc[0]),
-         "not_answer": bool(y.iloc[-1] <= y.iloc[0])},
-        {"question": "Give the slope between the first and last points.",
-         "answer": float(slope),
-         "not_answer": float(slope * -1)}
+        {
+            "question": "At which x does the line reach its maximum y?",
+            "answer": x.iloc[y.idxmax()],
+            "answer_rationale": ["locate maximum y value in series", "return corresponding x coordinate"],
+            "not_answer": x.iloc[y.idxmin()],
+            "not_answer_rationale": ["locate minimum y value in series", "return corresponding x coordinate"],
+        },
+        {
+            "question": "What is the largest single‑step increase in y?",
+            "answer": float(diff.max()),
+            "answer_rationale": ["compute adjacent differences", "identify maximum positive jump, output magnitude value"],
+            "not_answer": float(diff.min()),
+            "not_answer_rationale": ["compute adjacent differences", "identify maximum negative drop, output magnitude value"],
+        },
+        {
+            "question": f"In which x‑interval does y first exceed its mean ({thr:.2f})?",
+            "answer": x.iloc[exceed_idx] if exceed_idx is not None else None,
+            "answer_rationale": ["scan y values until exceeding mean threshold", "return corresponding x coordinate"],
+            "not_answer": not_exceed,
+            "not_answer_rationale": ["return x coordinate never exceeding mean threshold", "representing alternative interval"],
+        },
+        {
+            "question": "What is the average y over the whole series?",
+            "answer": float(y.mean()),
+            "answer_rationale": ["average all y values across series", "output mean numeric value"],
+            "not_answer": float(y.mean() + 1),
+            "not_answer_rationale": ["average y values then add arbitrary one offset", "output resultant value"],
+        },
+        {
+            "question": "Is the overall trend positive?",
+            "answer": bool(y.iloc[-1] > y.iloc[0]),
+            "answer_rationale": ["compare first and last y values", "return positive trend boolean"],
+            "not_answer": bool(y.iloc[-1] <= y.iloc[0]),
+            "not_answer_rationale": ["compare first and last y values", "return nonpositive trend boolean"],
+        },
+        {
+            "question": "Give the slope between the first and last points.",
+            "answer": float(slope),
+            "answer_rationale": ["compute slope using endpoints difference over x range", "output numeric value"],
+            "not_answer": float(slope * -1),
+            "not_answer_rationale": ["negate computed slope value", "yield alternative opposite numeric answer"],
+        },
     ]
     return q
 
@@ -284,24 +413,48 @@ def scatter_questions(df: pd.DataFrame) -> List[Dict[str, Any]]:
     frac_above  = ((y > x).sum() / len(df)).round(3)
 
     q = [
-        {"question": "What is the Pearson correlation between x and y?",
-         "answer": float(corr),
-         "not_answer": float(-corr if corr != 0 else 0.5)},
-        {"question": "How many points have x > 0 and y > 0?",
-         "answer": int(((x > 0) & (y > 0)).sum()),
-         "not_answer": int(((x < 0) & (y < 0)).sum())},
-        {"question": "What is the closest point to (0,0)?",
-         "answer": int(origin_dist.idxmin()),
-         "not_answer": int(origin_dist.idxmax())},
-        {"question": "Which point has the highest y?",
-         "answer": int(y.idxmax()),
-         "not_answer": int(y.idxmin())},
-        {"question": "What fraction of points lie above the line y = x?",
-         "answer": float(frac_above),
-         "not_answer": float(round(1 - frac_above, 3))},
-        {"question": "Is the relationship positive or negative?",
-         "answer": "positive" if corr > 0 else "negative",
-         "not_answer": "negative" if corr > 0 else "positive"}
+        {
+            "question": "What is the Pearson correlation between x and y?",
+            "answer": float(corr),
+            "answer_rationale": ["compute Pearson coefficient between x and y", "return numerical correlation value"],
+            "not_answer": float(-corr if corr != 0 else 0.5),
+            "not_answer_rationale": ["negate computed correlation coefficient", "present as alternative numerical value"],
+        },
+        {
+            "question": "How many points have x > 0 and y > 0?",
+            "answer": int(((x > 0) & (y > 0)).sum()),
+            "answer_rationale": ["count points where x positive and y positive", "output total count"],
+            "not_answer": int(((x < 0) & (y < 0)).sum()),
+            "not_answer_rationale": ["count points where x negative and y negative", "output total count"],
+        },
+        {
+            "question": "What is the closest point to (0,0)?",
+            "answer": int(origin_dist.idxmin()),
+            "answer_rationale": ["calculate Euclidean distance to origin", "select index with minimal distance value"],
+            "not_answer": int(origin_dist.idxmax()),
+            "not_answer_rationale": ["calculate Euclidean distance to origin", "select index with maximal distance value"],
+        },
+        {
+            "question": "Which point has the highest y?",
+            "answer": int(y.idxmax()),
+            "answer_rationale": ["identify maximum y value across points", "return corresponding point index identifier"],
+            "not_answer": int(y.idxmin()),
+            "not_answer_rationale": ["identify minimum y value across points", "return corresponding point index identifier"],
+        },
+        {
+            "question": "What fraction of points lie above the line y = x?",
+            "answer": float(frac_above),
+            "answer_rationale": ["compute ratio of points above y equals x", "return rounded fraction"],
+            "not_answer": float(round(1 - frac_above, 3)),
+            "not_answer_rationale": ["compute ratio of points below y equals x", "return rounded fraction"],
+        },
+        {
+            "question": "Is the relationship positive or negative?",
+            "answer": "positive" if corr > 0 else "negative",
+            "answer_rationale": ["check sign of correlation", "output 'positive' when coefficient greater than zero"],
+            "not_answer": "negative" if corr > 0 else "positive",
+            "not_answer_rationale": ["check sign of correlation", "output opposite label to actual correlation sign"],
+        },
     ]
     return q
 
@@ -314,21 +467,41 @@ def bubble_questions(df: pd.DataFrame) -> List[Dict[str, Any]]:
     corr_sz_y  = np.corrcoef(size, y)[0, 1]
 
     q = [
-        {"question": "Which bubble is largest?",
-         "answer": int(size.idxmax()),
-         "not_answer": int(size.idxmin())},
-        {"question": "What is the average bubble size?",
-         "answer": float(size.mean()),
-         "not_answer": float(size.mean() + 1)},
-        {"question": "How many bubbles have size below the median?",
-         "answer": int((size < size.median()).sum()),
-         "not_answer": int((size > size.median()).sum())},
-        {"question": "Which bubble has the highest y?",
-         "answer": int(y.idxmax()),
-         "not_answer": int(y.idxmin())},
-        {"question": "Is there a positive relationship between size and y?",
-         "answer": bool(corr_sz_y > 0),
-         "not_answer": bool(corr_sz_y <= 0)}
+        {
+            "question": "Which bubble is largest?",
+            "answer": int(size.idxmax()),
+            "answer_rationale": ["scan size column values", "find maximum index, output bubble id"],
+            "not_answer": int(size.idxmin()),
+            "not_answer_rationale": ["scan size column values", "find minimum index, output bubble id"],
+        },
+        {
+            "question": "What is the average bubble size?",
+            "answer": float(size.mean()),
+            "answer_rationale": ["sum all bubble sizes, divide by count", "output average size"],
+            "not_answer": float(size.mean() + 1),
+            "not_answer_rationale": ["sum sizes, divide by count", "add one offset before output"],
+        },
+        {
+            "question": "How many bubbles have size below the median?",
+            "answer": int((size < size.median()).sum()),
+            "answer_rationale": ["compare sizes to median", "count smaller values, return integer total"],
+            "not_answer": int((size > size.median()).sum()),
+            "not_answer_rationale": ["compare sizes to median", "count larger values, return integer total"],
+        },
+        {
+            "question": "Which bubble has the highest y?",
+            "answer": int(y.idxmax()),
+            "answer_rationale": ["locate maximum y value", "return corresponding bubble index identifier entry"],
+            "not_answer": int(y.idxmin()),
+            "not_answer_rationale": ["locate minimum y value", "return corresponding bubble index identifier entry"],
+        },
+        {
+            "question": "Is there a positive relationship between size and y?",
+            "answer": bool(corr_sz_y > 0),
+            "answer_rationale": ["compute Pearson correlation size versus y", "check sign, return boolean"],
+            "not_answer": bool(corr_sz_y <= 0),
+            "not_answer_rationale": ["compute correlation size versus y", "check nonpositive sign, return boolean"],
+        },
     ]
     return q
 
@@ -343,21 +516,41 @@ def line_dual_axis_questions(df: pd.DataFrame) -> List[Dict[str, Any]]:
     alt_x     = x.iloc[-1] if cross_x is not None else x.iloc[0]
 
     q = [
-        {"question": "At which x do the two lines cross?",
-         "answer": cross_x,
-         "not_answer": alt_x},
-        {"question": "Which series has a higher final value?",
-         "answer": "y1" if y1.iloc[-1] > y2.iloc[-1] else "y2",
-         "not_answer": "y2" if y1.iloc[-1] > y2.iloc[-1] else "y1"},
-        {"question": "What is the max absolute gap between the two lines?",
-         "answer": float(abs(gap).max()),
-         "not_answer": float(abs(gap).min())},
-        {"question": "Give the mean value of series 1.",
-         "answer": float(y1.mean()),
-         "not_answer": float(y1.mean() + 1)},
-        {"question": "Is series 2 increasing overall?",
-         "answer": bool(y2.iloc[-1] > y2.iloc[0]),
-         "not_answer": bool(y2.iloc[-1] <= y2.iloc[0])}
+        {
+            "question": "At which x do the two lines cross?",
+            "answer": cross_x,
+            "answer_rationale": ["compute y1‑y2 sign change", "find first crossing x coordinate"],
+            "not_answer": alt_x,
+            "not_answer_rationale": ["select plot endpoint", "x value where lines remain separated"],
+        },
+        {
+            "question": "Which series has a higher final value?",
+            "answer": "y1" if y1.iloc[-1] > y2.iloc[-1] else "y2",
+            "answer_rationale": ["compare final y1 and y2 values", "choose greater series name"],
+            "not_answer": "y2" if y1.iloc[-1] > y2.iloc[-1] else "y1",
+            "not_answer_rationale": ["compare final y1 and y2 values", "choose smaller series name"],
+        },
+        {
+            "question": "What is the max absolute gap between the two lines?",
+            "answer": float(abs(gap).max()),
+            "answer_rationale": ["take absolute y1‑y2 gap array", "report maximum absolute gap"],
+            "not_answer": float(abs(gap).min()),
+            "not_answer_rationale": ["take absolute y1‑y2 gap array", "report minimum absolute gap"],
+        },
+        {
+            "question": "Give the mean value of series 1.",
+            "answer": float(y1.mean()),
+            "answer_rationale": ["sum series one values", "divide by count, output mean value"],
+            "not_answer": float(y1.mean() + 1),
+            "not_answer_rationale": ["sum series one values", "divide by count, add offset value"],
+        },
+        {
+            "question": "Is series 2 increasing overall?",
+            "answer": bool(y2.iloc[-1] > y2.iloc[0]),
+            "answer_rationale": ["compare first and last y2 values", "return increasing boolean flag"],
+            "not_answer": bool(y2.iloc[-1] <= y2.iloc[0]),
+            "not_answer_rationale": ["compare first and last y2 values", "return not‑increasing boolean flag"],
+        },
     ]
     return q
 
@@ -372,23 +565,44 @@ def scatter_matrix_questions(df: pd.DataFrame) -> List[Dict[str, Any]]:
     max_pair  = tri.abs().stack().idxmax()
     min_pair  = tri.abs().stack().idxmin()
     var_series = num_df.var()
+    any_neg_all = bool((corr_mtx.apply(lambda r: (r < 0).all(), axis=1)).any())
 
     q = [
-        {"question": "Which pair of variables has the highest Pearson correlation?",
-         "answer": tuple(max_pair),
-         "not_answer": tuple(min_pair)},
-        {"question": "Which variable shows the largest variance?",
-         "answer": var_series.idxmax(),
-         "not_answer": var_series.idxmin()},
-        {"question": "Is any variable negatively correlated with all others?",
-         "answer": bool((corr_mtx.apply(lambda r: (r < 0).all(), axis=1)).any()),
-         "not_answer": bool((corr_mtx.apply(lambda r: (r < 0).all(), axis=1)).any()) is False},
-        {"question": "How many pairs have |corr| > 0.8?",
-         "answer": int((tri.abs() > 0.8).sum().sum()),
-         "not_answer": int((tri.abs() <= 0.8).sum().sum())},
-        {"question": "List variables ordered by decreasing variance.",
-         "answer": _rank_desc(var_series),
-         "not_answer": _rank_desc(var_series)[::-1]}
+        {
+            "question": "Which pair of variables has the highest Pearson correlation?",
+            "answer": tuple(max_pair),
+            "answer_rationale": ["compute absolute correlations", "find highest coefficient, output variable pair"],
+            "not_answer": tuple(min_pair),
+            "not_answer_rationale": ["compute absolute correlations", "find lowest coefficient, output variable pair"],
+        },
+        {
+            "question": "Which variable shows the largest variance?",
+            "answer": var_series.idxmax(),
+            "answer_rationale": ["calculate variance each variable", "compare values, select greatest variance variable"],
+            "not_answer": var_series.idxmin(),
+            "not_answer_rationale": ["calculate variance each variable", "compare values, select smallest variance variable"],
+        },
+        {
+            "question": "Is any variable negatively correlated with all others?",
+            "answer": any_neg_all,
+            "answer_rationale": ["check correlations below zero for each variable", "return existence boolean flag"],
+            "not_answer": not any_neg_all,
+            "not_answer_rationale": ["check correlations nonnegative for each variable", "return existence boolean flag"],
+        },
+        {
+            "question": "How many pairs have |corr| > 0.8?",
+            "answer": int((tri.abs() > 0.8).sum().sum()),
+            "answer_rationale": ["count correlation pairs above threshold 0.8", "return total integer number"],
+            "not_answer": int((tri.abs() <= 0.8).sum().sum()),
+            "not_answer_rationale": ["count correlation pairs at most 0.8 absolute", "return total integer number"],
+        },
+        {
+            "question": "List variables ordered by decreasing variance.",
+            "answer": _rank_desc(var_series),
+            "answer_rationale": ["sort variables by variance descending order", "output ordered variable list"],
+            "not_answer": _rank_desc(var_series)[::-1],
+            "not_answer_rationale": ["sort variables by variance ascending order", "output reversed variable list"],
+        },
     ]
     return q
 
@@ -404,21 +618,41 @@ def stacked_bar_questions(df: pd.DataFrame) -> List[Dict[str, Any]]:
     pct           = (val[(g == g0) & (s == s0)].sum() / group_total[g0] * 100).round(2)
 
     q = [
-        {"question": f"In group {g0}, what is the total stack height?",
-         "answer": float(group_total[g0]),
-         "not_answer": float(group_total.min())},
-        {"question": "Which series contributes most overall across all groups?",
-         "answer": series_total.idxmax(),
-         "not_answer": series_total.idxmin()},
-        {"question": "Which group has the highest total?",
-         "answer": group_total.idxmax(),
-         "not_answer": group_total.idxmin()},
-        {"question": f"For group {g0}, what percentage is series {s0}?",
-         "answer": float(pct),
-         "not_answer": float(round(100 - pct, 2))},
-        {"question": "Which series has the largest single segment?",
-         "answer": s.iloc[val.idxmax()],
-         "not_answer": s.iloc[val.idxmin()]}
+        {
+            "question": f"In group {g0}, what is the total stack height?",
+            "answer": float(group_total[g0]),
+            "answer_rationale": ["sum series values in group", "report overall stack height number"],
+            "not_answer": float(group_total.min()),
+            "not_answer_rationale": ["select group minimal total value", "present as stack height number"],
+        },
+        {
+            "question": "Which series contributes most overall across all groups?",
+            "answer": series_total.idxmax(),
+            "answer_rationale": ["aggregate each series totals", "compare values, choose highest overall contributor"],
+            "not_answer": series_total.idxmin(),
+            "not_answer_rationale": ["aggregate each series totals", "compare values, choose lowest overall contributor"],
+        },
+        {
+            "question": "Which group has the highest total?",
+            "answer": group_total.idxmax(),
+            "answer_rationale": ["compare totals between groups", "identify greatest total, output group name"],
+            "not_answer": group_total.idxmin(),
+            "not_answer_rationale": ["compare totals between groups", "identify smallest total, output group name"],
+        },
+        {
+            "question": f"For group {g0}, what percentage is series {s0}?",
+            "answer": float(pct),
+            "answer_rationale": ["calculate series value over group total", "convert ratio to percentage"],
+            "not_answer": float(round(100 - pct, 2)),
+            "not_answer_rationale": ["calculate complementary percentage to series", "present complement number"],
+        },
+        {
+            "question": "Which series has the largest single segment?",
+            "answer": s.iloc[val.idxmax()],
+            "answer_rationale": ["scan individual segment heights", "locate maximum segment, return series name"],
+            "not_answer": s.iloc[val.idxmin()],
+            "not_answer_rationale": ["scan individual segment heights", "locate minimum segment, return series name"],
+        },
     ]
     return q
 
@@ -436,22 +670,41 @@ def multi_line_questions(df: pd.DataFrame) -> List[Dict[str, Any]]:
     slopes     = {c: (df[c].iloc[-1] - df[c].iloc[0]) /
                      (x.iloc[-1] - x.iloc[0]) for c in y_cols}
 
-    q = [
-        {"question": "Which line reaches the highest y at any x?",
-         "answer": line_max,
-         "not_answer": line_min},
-        {"question": "At the final x, which line has the lowest value?",
-         "answer": final_vals.idxmin(),
-         "not_answer": final_vals.idxmax()},
-        {"question": "Which line shows the steepest average upward trend?",
-         "answer": max(slopes, key=slopes.get),
-         "not_answer": min(slopes, key=slopes.get)},
-        {"question": "How many lines have a net positive change?",
-         "answer": int(sum(v > 0 for v in slopes.values())),
-         "not_answer": int(sum(v <= 0 for v in slopes.values()))},
-        {"question": "Give the mean value of each line.",
-         "answer": {c: float(df[c].mean()) for c in y_cols},
-         "not_answer": {c: float(df[c].mean() + 1) for c in y_cols}}
+    q = [{
+        "question": "Which line reaches the highest y at any x?",
+        "answer": line_max,
+        "answer_rationale": ["identify each line peak", "compare peaks across lines, choose highest peak value"],
+        "not_answer": line_min,
+        "not_answer_rationale": ["identify each line minimum", "compare minima across lines, choose lowest minimum value"],
+    },
+    {
+        "question": "At the final x, which line has the lowest value?",
+        "answer": final_vals.idxmin(),
+        "answer_rationale": ["take values at final x coordinate", "compare all, select smallest number"],
+        "not_answer": final_vals.idxmax(),
+        "not_answer_rationale": ["take values at final x coordinate", "compare all, select largest number"],
+    },
+    {
+        "question": "Which line shows the steepest average upward trend?",
+        "answer": max(slopes, key=slopes.get),
+        "answer_rationale": ["compute average slope per line", "rank slopes descending, pick top positive change"],
+        "not_answer": min(slopes, key=slopes.get),
+        "not_answer_rationale": ["compute average slope per line", "rank slopes ascending, pick lowest negative change"],
+    },
+    {
+        "question": "How many lines have a net positive change?",
+        "answer": int(sum(v > 0 for v in slopes.values())),
+        "answer_rationale": ["calculate net change each line", "count those greater than zero, return total"],
+        "not_answer": int(sum(v <= 0 for v in slopes.values())),
+        "not_answer_rationale": ["calculate net change each line", "count those not above zero, return total"],
+    },
+    {
+        "question": "Give the mean value of each line.",
+        "answer": {c: float(df[c].mean()) for c in y_cols},
+        "answer_rationale": ["for every line, sum all values", "divide by count, produce mean"],
+        "not_answer": {c: float(df[c].mean() + 1) for c in y_cols},
+        "not_answer_rationale": ["for every line, sum all values", "divide by count, add one offset"],
+    },
     ]
     return q
 
@@ -575,24 +828,63 @@ def get_plot(path):
 
 def pref_format(example):
     # Prepare the input for the chat template
-    prompt = [
-        {
-            "role": "user",
-            "content": [{"type": "image"}, {"type": "text", "text": example["question"]}],
-        },
-    ]
-    chosen = [
-        {
-            "role": "assistant",
-            "content": [{"type": "text", "text": example["label"]}],
-        },
-    ]
-    rejected = [
-        {
-            "role": "assistant",
-            "content": [{"type": "text", "text": example["not_answer"]}],
-        },
-    ]
+    cot = True
+    cot_prefix = ( "Look at the chart. Think step-by-step based on the question and chart. \n \
+                Generate a reasoning chain first and output it as Reason. \n \
+                In the next line, answer the question with a single word only without units or symbols.\n \
+                Format:  \
+                ### Question: {question} \
+                ### Reason: \
+                step-1 ... \
+                step-2 ... \
+                ....\
+                step-n ... \
+                ### Answer: \n")
+    
+    rationale_format = ( "### Reason: \
+                           step-1: {step1}.\nstep-2: {step2}.\n \
+                           ###Answer: {answer}")
+    
+        
+    if  cot:
+        prompt =[
+            {
+                "role": "user",
+                "content": [{"type": "image"},{"type": "text", "text": cot_prefix.format(question=example["question"])}],
+            }
+        ]
+        chosen = [
+            {
+                "role": "assistant",
+                "content": [{"type": "text", "text": rationale_format.format(step1=example["answer_rationale"][0],step2=example["answer_rationale"][1],answer=example["label"])}],
+            },
+        ]
+        rejected = [
+            {
+                "role": "assistant",
+                "content": [{"type": "text", "text": rationale_format.format(step1=example["not_answer_rationale"][0],step2=example["not_answer_rationale"][1],answer=example["not_answer"])}],
+            },
+        ]
+    else:
+        prompt = [
+            {
+                "role": "user",
+                "content": [{"type": "image"}, {"type": "text", "text": example["question"]}],
+            },
+        ]
+    
+        chosen = [
+            {
+                "role": "assistant",
+                "content": [{"type": "text", "text": example["label"]}],
+            },
+        ]
+        rejected = [
+            {
+                "role": "assistant",
+                "content": [{"type": "text", "text": example["not_answer"]}],
+            },
+        ]
     # Apply the chat template
     prompt = processor.apply_chat_template(prompt, tokenize=False)
     chosen = processor.apply_chat_template(chosen, tokenize=False)
@@ -603,10 +895,18 @@ def pref_format(example):
     # example["image"].thumbnail((max_size, max_size))
     return {"images": [example["image"]], "prompt": prompt, "chosen": chosen, "rejected": rejected}
 
+
+def get_chartqa_tables():
+    return
+
+
 def main():
     tables = os.listdir(dset+"tables")
     plots = os.listdir(dset+"png")
+
     # cnt = 0
+
+    cot = True
 
     all_data = []
     err = 0
@@ -618,12 +918,22 @@ def main():
             tab,legend = auto_rename(tab, chart_type)
             questions = generate_QA(tab, chart_type)
             for qs in questions:
-                all_data.append({
-                    "image": chart,
-                    "question": qs["question"],
-                    "label": str(qs["answer"]),
-                    "not_answer": str(qs["not_answer"]),
-                })
+                if not cot:
+                    all_data.append({
+                        "image": chart,
+                        "question": qs["question"],
+                        "label": str(qs["answer"]),
+                        "not_answer": str(qs["not_answer"]),
+                    })
+                else:
+                    all_data.append({
+                        "image": chart,
+                        "question": qs["question"],
+                        "label": str(qs["answer"]),
+                        "not_answer": str(qs["not_answer"]),
+                        "answer_rationale": qs["answer_rationale"],
+                        "not_answer_rationale": qs["not_answer_rationale"]
+                    })
         except:
             err+=1
         # print(chart_type)
@@ -633,8 +943,9 @@ def main():
     dataset = Dataset.from_list(all_data)
     pref_dataset = dataset.map(pref_format, num_proc=32)
     # pref_dataset.save_to_disk("./pref-data/base-qwen-7b-hf-dset-tabular")
-    pref_dataset.save_to_disk("./pref-data/llava-1.6-hf-dset-tabular")
-
+    # pref_dataset.save_to_disk("./pref-data/llava-1.6-hf-dset-tabular")
+    # pref_dataset.save_to_disk("./pref-data/internvl-hf-dset-tabular")
+    pref_dataset.save_to_disk("./pref-data/qwen-7b-hf-dset-rationale-table")
 
 
 main()
