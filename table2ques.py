@@ -9,8 +9,19 @@ from PIL import Image
 import numpy as np
 from typing import List, Dict, Any, Tuple
 import numpy as np
+import csv, io
+from io import BytesIO
 
-from datasets import Dataset
+
+
+import argparse, csv, sys, re
+from pathlib import Path
+from typing import List
+
+from markdown_it import MarkdownIt
+md_parser = MarkdownIt("commonmark").enable("table")
+
+from datasets import Dataset, load_dataset
 
 from models import load_vlm_model
 
@@ -291,7 +302,6 @@ def grouped_bar_questions(df: pd.DataFrame) -> List[Dict[str, Any]]:
 # -----------------------------------------------------------------
 #  Histogram
 # -----------------------------------------------------------------
-
 def histogram_questions(df: pd.DataFrame, bins: int = 10) -> List[Dict[str, Any]]:
     v = df['value']
     counts, bin_edges = np.histogram(v, bins=bins)
@@ -896,23 +906,107 @@ def pref_format(example):
     return {"images": [example["image"]], "prompt": prompt, "chosen": chosen, "rejected": rejected}
 
 
-def get_chartqa_tables():
-    return
 
+
+def md_table_to_rows(md_text: str):
+    """Return a list of rows (lists of cells) parsed from a Markdown table."""
+    tokens = md_parser.parse(md_text)
+    csv_rows: List[List[str]] = []
+    cur_row: List[str] = []
+    inside_cell = False      # True while we're between *_open / *_close
+
+    for tok in tokens:
+        t = tok.type
+
+        if t == "tr_open":
+            cur_row = []
+        elif t in ("th_open", "td_open"):
+            inside_cell = True
+        elif t == "inline" and inside_cell:
+            cur_row.append(tok.content.strip())
+        elif t in ("th_close", "td_close"):
+            inside_cell = False
+        elif t == "tr_close":
+            csv_rows.append(cur_row)
+        elif t == "table_close":
+            break            # we only want the first table
+
+    if not csv_rows:
+        raise ValueError("No Markdown table found.")
+
+    buf = io.StringIO()
+    csv.writer(buf,lineterminator="\n").writerows(csv_rows)
+    return buf.getvalue().rstrip("\n")
+
+def get_unichart_tables():
+    dataset = load_dataset("ahmed-masry/unichart-table-data")["train"]
+
+    tab = []
+    plot = []
+    err=0
+    for datapoint in tqdm(dataset, total=len(dataset)):
+        # try:
+        md_table = datapoint["table"]
+        rows = md_table_to_rows(md_table).split("\n")
+        try:
+            header = rows[0].split(",")
+            data   = [r.split(",") for r in rows[1:]]
+            df = pd.DataFrame(data, columns=header).apply(pd.to_numeric, errors="ignore")
+            tab.append(df)
+            plot.append(Image.open(BytesIO(datapoint["image"])).convert("RGB"))
+        except:
+            err+=1
+            pass
+    
+    print("Err:", err/len(dataset))
+    
+    return tab, plot
+
+    
 
 def main():
+    types = {}
+    cot = True
+    all_data = []
+    err = 0
+    
+    unichart_tab, unichart_plot =  get_unichart_tables()
+    for tab,plot in tqdm(zip(unichart_tab,unichart_plot), total=len(unichart_tab)):
+        chart_type = pick_chart(tab)
+        chart = plot
+        try:
+            tab,legend = auto_rename(tab, chart_type)
+            questions = generate_QA(tab, chart_type)
+            for qs in questions:
+                if not cot:
+                    all_data.append({
+                        "image": chart,
+                        "question": qs["question"],
+                        "label": str(qs["answer"]),
+                        "not_answer": str(qs["not_answer"]),
+                    })
+                else:
+                    all_data.append({
+                        "image": chart,
+                        "question": qs["question"],
+                        "label": str(qs["answer"]),
+                        "not_answer": str(qs["not_answer"]),
+                        "answer_rationale": qs["answer_rationale"],
+                        "not_answer_rationale": qs["not_answer_rationale"]
+                    })
+        except:
+            err+=1
+   
     tables = os.listdir(dset+"tables")
     plots = os.listdir(dset+"png")
 
-    # cnt = 0
-
-    cot = True
-
-    all_data = []
-    err = 0
     for table,plot in tqdm(zip(tables,plots), total=len(tables)):
         tab = get_table(dset+"tables/"+table)
         chart_type = pick_chart(tab)
+        if chart_type not in types:
+            types[chart_type] = 1
+        else:
+            types[chart_type] += 1
         chart = get_plot(dset+"png/"+plot)
         try:
             tab,legend = auto_rename(tab, chart_type)
@@ -945,7 +1039,9 @@ def main():
     # pref_dataset.save_to_disk("./pref-data/base-qwen-7b-hf-dset-tabular")
     # pref_dataset.save_to_disk("./pref-data/llava-1.6-hf-dset-tabular")
     # pref_dataset.save_to_disk("./pref-data/internvl-hf-dset-tabular")
-    pref_dataset.save_to_disk("./pref-data/qwen-7b-hf-dset-rationale-table")
+    # pref_dataset.save_to_disk("./pref-data/qwen-7b-hf-dset-rationale-table")
+    pref_dataset.save_to_disk("./pref-data/qwen-7b-hf-dset-rationale-table-unichart")
+
 
 
 main()
