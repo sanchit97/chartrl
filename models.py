@@ -14,8 +14,8 @@ os.environ["FLASH_ATTENTION_2_ENABLED"] = "1"
 from datasets import Dataset, load_dataset, load_from_disk
 
 from transformers import Blip2Processor, Blip2ForConditionalGeneration, InstructBlipProcessor, InstructBlipForConditionalGeneration
-from transformers import LlavaForConditionalGeneration, LlavaNextProcessor, LlavaNextForConditionalGeneration
-from transformers import AutoModel, AutoProcessor, AutoTokenizer, AutoModelForImageTextToText, AutoModelForVisualQuestionAnswering,AutoModelForCausalLM, AutoModelForZeroShotObjectDetection
+from transformers import LlavaForConditionalGeneration, LlavaNextProcessor, LlavaNextForConditionalGeneration, PaliGemmaForConditionalGeneration, Qwen2VLForConditionalGeneration
+from transformers import AutoModel, AutoProcessor, AutoTokenizer, AutoModelForImageTextToText, AutoModelForVisualQuestionAnswering,AutoModelForCausalLM, AutoModelForZeroShotObjectDetection, Qwen2VLProcessor
 from transformers import pipeline
 
 from transformers import DonutProcessor, VisionEncoderDecoderModel
@@ -49,54 +49,40 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 def load_vlm_model(model_type):
     # For smaller models (CLIP based)
-    if model_type== "blip2":
-        model_name = "Salesforce/blip2-flan-t5-xl"
-        processor = Blip2Processor.from_pretrained(model_name)
-        model = Blip2ForConditionalGeneration.from_pretrained(model_name,device_map = "auto", cache_dir = cache_dir)
-    if model_type == "instructblip":
-        processor = AutoProcessor.from_pretrained("Salesforce/instructblip-flan-t5-xl")
-        model = InstructBlipForConditionalGeneration.from_pretrained("Salesforce/instructblip-flan-t5-xl", device_map="auto", cache_dir = cache_dir)
-    if model_type == "blip2-xxl":
-        processor = InstructBlipProcessor.from_pretrained("Salesforce/blip2-flan-t5-xxl")
-        model = AutoModelForVisualQuestionAnswering.from_pretrained("Salesforce/blip2-flan-t5-xxl", device_map="auto",cache_dir = cache_dir)
-    
+   
     if model_type == "pali-3b":
-        model_name = "google/paligemma2-3b-mix-448"
+        # model_name = "google/paligemma2-3b-mix-448"
+        model_name = "ahmed-masry/chartgemma"
+        processor = AutoProcessor.from_pretrained(model_name, device_map="auto",cache_dir = cache_dir)
+        model = PaliGemmaForConditionalGeneration.from_pretrained(model_name, device_map="auto",cache_dir = cache_dir)
+
+    if model_type == "pali-10b":
+        model_name = "google/paligemma2-10b-mix-448"
         processor = AutoProcessor.from_pretrained(model_name, device_map="auto",cache_dir = cache_dir)
         model = AutoModelForImageTextToText.from_pretrained(model_name, device_map="auto",cache_dir = cache_dir)
 
 
     # For medium models (below 8b)
-    if model_type == "instructblip-vicuna":
-        processor = InstructBlipProcessor.from_pretrained("Salesforce/instructblip-vicuna-7b")
-        model = InstructBlipForConditionalGeneration.from_pretrained("Salesforce/instructblip-vicuna-7b", device_map="auto",cache_dir = cache_dir)
-    if model_type == "llava-1.5":
-        model_name = "llava-hf/llava-1.5-7b-hf"
-        processor = AutoProcessor.from_pretrained(model_name)
-        model = LlavaForConditionalGeneration.from_pretrained(model_name, device_map="auto",cache_dir = cache_dir)
     if model_type == "llava-1.6":
         model_name = "llava-hf/llava-v1.6-mistral-7b-hf"
         processor = LlavaNextProcessor.from_pretrained(model_name)
         model = LlavaNextForConditionalGeneration.from_pretrained(model_name, device_map="auto",cache_dir = cache_dir, attn_implementation = "flash_attention_2", torch_dtype=torch.bfloat16)
     if model_type == "qwen-7b":
-        processor = AutoProcessor.from_pretrained("Qwen/Qwen2-VL-7B-Instruct")
-        model = AutoModelForImageTextToText.from_pretrained("Qwen/Qwen2-VL-7B-Instruct", device_map="auto",cache_dir = cache_dir, attn_implementation = "flash_attention_2", torch_dtype=torch.bfloat16)
-        # processor = AutoProcessor.from_pretrained("Qwen/Qwen2-VL-7B")
-        # model = AutoModelForImageTextToText.from_pretrained("Qwen/Qwen2-VL-7B", device_map="auto",cache_dir = cache_dir, attn_implementation = "flash_attention_2", torch_dtype=torch.bfloat16)
+        processor = Qwen2VLProcessor.from_pretrained("Qwen/Qwen2-VL-7B-Instruct")
+        model = Qwen2VLForConditionalGeneration.from_pretrained("Qwen/Qwen2-VL-7B-Instruct", device_map="auto",cache_dir = cache_dir, attn_implementation = "flash_attention_2", torch_dtype="auto")
+    if model_type == "qwen-2b":
+        # device map = "auto" gives wrong device error on qwen2vl-2b #TODO
+        processor = Qwen2VLProcessor.from_pretrained("Qwen/Qwen2-VL-2B-Instruct", trust_remote_code=True, cache_dir = cache_dir)
+        # model = AutoModelForImageTextToText.from_pretrained("Qwen/Qwen2-VL-2B-Instruct", device_map={"": 0}, cache_dir = cache_dir, attn_implementation = "flash_attention_2", torch_dtype=torch.bfloat16)
+        model = Qwen2VLForConditionalGeneration.from_pretrained("Qwen/Qwen2-VL-2B-Instruct", torch_dtype="auto", device_map="auto",attn_implementation = "flash_attention_2", trust_remote_code=True, cache_dir = cache_dir)
+
     if model_type == "internvl-8b":
         processor = AutoTokenizer.from_pretrained("OpenGVLab/InternVL2_5-8B", device_map="auto",cache_dir = cache_dir, trust_remote_code=True,torch_dtype=torch.bfloat16)
         model = AutoModel.from_pretrained("OpenGVLab/InternVL2_5-8B", device_map="auto",cache_dir = cache_dir, trust_remote_code=True,torch_dtype=torch.bfloat16)
 
+
+
     # For big models (above 13-15b)
-    if model_type == "instructblip-xxl": #prob 13b
-        processor = AutoProcessor.from_pretrained("Salesforce/instructblip-flan-t5-xxl")
-        model = AutoModelForImageTextToText.from_pretrained("Salesforce/instructblip-flan-t5-xxl", device_map="auto",cache_dir = cache_dir)
-    if model_type == "instructblip-vicuna-13b":
-        processor = InstructBlipProcessor.from_pretrained("Salesforce/instructblip-vicuna-13b")
-        model = InstructBlipForConditionalGeneration.from_pretrained("Salesforce/instructblip-vicuna-13b", device_map="auto",cache_dir = cache_dir)
-    if model_type == "llava-1.5-13b":
-        processor = AutoProcessor.from_pretrained("llava-hf/llava-1.5-13b-hf")
-        model = AutoModelForImageTextToText.from_pretrained("llava-hf/llava-1.5-13b-hf", device_map="auto",cache_dir = cache_dir)
     if model_type == "llava-1.6-13b":
         processor = AutoProcessor.from_pretrained("llava-hf/llava-v1.6-vicuna-13b-hf")
         model = AutoModelForImageTextToText.from_pretrained("llava-hf/llava-v1.6-vicuna-13b-hf", device_map="auto",cache_dir = cache_dir)
@@ -137,6 +123,9 @@ def load_vlm_model(model_type):
     if model_type == "generic-ocr":
         pipe = pipeline("image-text-to-text", model="Qwen/Qwen2-VL-2B-Instruct")
         return pipe
+
+    model.eval()
+    torch.cuda.empty_cache()
 
     return model, processor
 

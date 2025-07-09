@@ -4,6 +4,7 @@ import re
 import time
 import gc
 import random
+from PIL import Image
 
 seed = 2025
 random.seed(seed)
@@ -16,8 +17,12 @@ from qwen_vl_utils import process_vision_info
 from internvl_utils import get_conv_template, load_image
 
 
-def get_vlm_output(model, processor, image, query, cot = False, icl_samples=None):
-    max_new_tokens = 200 if cot else 20 # To speed up inference when not cot
+MIN_PIXELS = 1280 * 28 * 28            # 1 003 520
+MAX_PIXELS = 16384 * 28 * 28           # 12 843 776
+
+
+def get_vlm_output(model, processor, image, query, cot = False, icl_samples=None, model_device = None):
+    max_new_tokens = 200 if cot else 100 # To speed up inference when not cot
     rationale = None # only used when cot=True
 
     # For ICL
@@ -28,13 +33,15 @@ def get_vlm_output(model, processor, image, query, cot = False, icl_samples=None
     query =  [get_prompt_temp(q,cot) for q in query]
     messages = []
     for q,im in zip(query,image):
+        # breakpoint()
+        im = resize_up(im)
         if "llava" in model.__class__.__name__.lower():
             messages.append([
                 {
                     "role": "user",
                     "content": [
-                        {"type": "text", "text":q},
                         {"type": "image"},
+                        {"type": "text", "text":q},
                     ]
                 },
             ])
@@ -46,19 +53,20 @@ def get_vlm_output(model, processor, image, query, cot = False, icl_samples=None
             # Your task is to analyze the provided chart image and respond to queries with concise answers, usually a single word, number, or short phrase.
             # The charts include a variety of types (e.g., line charts, bar charts) and contain colors, labels, and text.
             # Focus on delivering accurate, succinct answers based on the visual information. Avoid additional explanation unless absolutely necessary."""
-            system_message = ""
+            # system_message = ""
+            
             messages.append([
+            # {
+            #     "role": "system",
+            #     "content": [{"type": "text", "text": system_message}],
+            # },
             {
-                "role": "system",
-                "content": [{"type": "text", "text": system_message}],
-            },
-            {   
                 "role": "user",
                 "content": [
-                    {"type": "text", "text": q},
                     {"type": "image", "image": im},
+                    {"type": "text", "text": q},
                 ],
-            }])    
+            }])
 
         elif "internvl" in model.__class__.__name__.lower():
             messages.append("<image>\n " + q)
@@ -88,7 +96,12 @@ def get_vlm_output(model, processor, image, query, cot = False, icl_samples=None
         # inputs = {k: v.to(model.device) for k, v in inputs.items()}
         output = model.generate(**inputs, max_new_tokens=max_new_tokens, do_sample = False)
         out_text = processor.batch_decode(output[:,input_len:], skip_special_tokens=True)
+        breakpoint()
         # out_text = [o.split(" ")[-1].strip() for o in out_text]
+        if cot:
+            pred_text = [out.split("### Answer:")[-1].strip() for out in out_text]
+            rationale = [out.split("### Reason:")[-1].split("### Answer")[0].strip("\n") for out in out_text]
+            out_text = pred_text
 
 
     elif "qwen" in model.__class__.__name__.lower():
@@ -101,7 +114,13 @@ def get_vlm_output(model, processor, image, query, cot = False, icl_samples=None
             padding=True,
             return_tensors="pt",
         )
-        inputs = inputs.to(model.device)
+        # Used .to(model.device) as default but it causes issues with qwen-2b models (investigate) #TODO
+        if model_device is not None:
+            inputs = inputs.to("cuda")
+            print("Moved inputs to cuda")
+        else:
+            inputs = inputs.to(model.device)
+            print("Moved inputs to device")
 
         # Inference: Generation of the output
         generated_ids = model.generate(**inputs, max_new_tokens=max_new_tokens)
@@ -109,7 +128,7 @@ def get_vlm_output(model, processor, image, query, cot = False, icl_samples=None
             out_ids[len(in_ids) :] for in_ids, out_ids in zip(inputs.input_ids, generated_ids)
         ]
         out_text = processor.batch_decode(
-            generated_ids_trimmed, skip_special_tokens=True, clean_up_tokenization_spaces=False
+            generated_ids_trimmed, skip_special_tokens=True
         )
 
         if cot:
@@ -159,6 +178,7 @@ def get_vlm_output(model, processor, image, query, cot = False, icl_samples=None
         attention_mask = model_inputs['attention_mask'].to(device)#.to(torch.bfloat16)
         pixel_values = torch.stack(pixel_values, dim=1).squeeze(0).to(device).to(torch.bfloat16)
         generation_config['eos_token_id'] = eos_token_id
+        generation_config['do_sample'] = False
 
        
         outputs = model.generate(pixel_values=pixel_values,
@@ -174,13 +194,13 @@ def get_vlm_output(model, processor, image, query, cot = False, icl_samples=None
             rationale = [out.split("### Reason:")[-1].split("### Answer")[0].strip("\n") for out in out_text]
             out_text = pred_text
 
-    return normalize_answer(out_text), rationale
+    return out_text, rationale
 
 def get_prompt_temp(q, cot=False):
     if cot:
-        prefix = ( " Look at the chart. Think step-by-step based on the question and chart. \n \
+        prefix = ( "Look at the chart. Think step-by-step based on the question and chart. \n \
                 Generate a reasoning chain first and output it as Reason. \n \
-                In the next line, answer the question with a single phrase only a Answer and no units.\n \
+                In the next line, answer the question with a single word only without units or symbols.\n \
                 Format:  \
                 ### Question: {question} \
                 ### Reason: \
@@ -192,23 +212,16 @@ def get_prompt_temp(q, cot=False):
         
         prefix = prefix.format(question=q)
     else:
-        prefix = "Look at the chart. %s Answer with a single phrase only."%q
+        # answer en 
+        # prefix = "%s Answer the question with a single word. Answer: "%q #used lmms-lab eval
+
         # For weird PaliGemma models (they require an instruction format of form "answer en")
-        # prefix = "answer en Look at the chart. %s Answer with a single phrase only.\n"%q
+        prefix = "{question}\n Please try to answer the question with short words or phrases if possible.".format(question=q)
 
         # prefix = "Look at the chart. %s Answer with one word only no other text."%q
         # prefix = "Look at the chart. %s. Answer in 100 words or fewer."%q
     return prefix
 
-def normalize_answer(answer):
-    """Lower text and remove punctuation, articles and extra whitespace."""
-    text = []
-    for ans in answer:
-        ans = str(ans)
-        # Keep only alphanumerics and spaces
-        ans = re.sub(r'[^A-Za-z0-9 .]+', '', ans)
-        text.append(ans.strip().lower())
-    return text
 
 def clear_memory():
     # Delete variables if they exist in the current global scope
@@ -260,6 +273,16 @@ def format_data(sample):
     ]
 
 
+def resize_up(img: Image.Image) -> Image.Image:
+    img = img.convert("RGB")
+    w, h = img.size
+    p = w * h
+    if MIN_PIXELS <= p <= MAX_PIXELS:
+        return img
+    tgt_p  = max(min(p, MAX_PIXELS), MIN_PIXELS)
+    scale  = (tgt_p / p) ** 0.5
+    new_wh = (int(w * scale), int(h * scale))
+    return img.resize(new_wh, Image.BICUBIC)
 
 
 def select_icl_samples(train_dataset, k=5):

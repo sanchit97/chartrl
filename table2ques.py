@@ -970,11 +970,19 @@ def main():
     all_data = []
     err = 0
     
-    unichart_tab, unichart_plot =  get_unichart_tables()
+    # unichart_tab, unichart_plot =  get_unichart_tables()
+
+    # with open("unichart_data.pkl", "wb") as f:
+    #     pickle.dump({"tab": unichart_tab, "plot": unichart_plot}, f)
+
+    with open("unichart_data.pkl", "rb") as f:
+        dat = pickle.load(f)
+        unichart_tab, unichart_plot = dat["tab"], dat["plot"]
+        
     for tab,plot in tqdm(zip(unichart_tab,unichart_plot), total=len(unichart_tab)):
-        chart_type = pick_chart(tab)
-        chart = plot
         try:
+            chart_type = pick_chart(tab)
+            chart = plot
             tab,legend = auto_rename(tab, chart_type)
             questions = generate_QA(tab, chart_type)
             for qs in questions:
@@ -996,6 +1004,8 @@ def main():
                     })
         except:
             err+=1
+
+    print("Charts skipped:", err)
    
     tables = os.listdir(dset+"tables")
     plots = os.listdir(dset+"png")

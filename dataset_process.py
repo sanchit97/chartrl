@@ -21,6 +21,8 @@ from qwen_vl_utils import process_vision_info
 
 from models import load_vlm_model
 
+# from utils import resize
+
 import logging
 logging.basicConfig(
     level=logging.INFO,
@@ -56,9 +58,56 @@ class ChartDataset:
         if self.dataset_name == "chartqa":
             dataset = load_dataset("HuggingFaceM4/ChartQA", cache_dir = cache_dir)
             data = dataset[split]
-            # test_dataloader = DataLoader(test_data, batch_size=1, collate_fn = collate_fn_chartqa)
-            # return test_dataloader
             return data
+        
+        if self.dataset_name == "chartqa-src":
+            if os.path.exists(cache_dir+"/chartqa_dataset_src"):
+                dataset = load_from_disk(str(cache_dir+"/chartqa_dataset_src"))
+
+            else:
+                chartqa_root = Path("./ChartQA/ChartQA Dataset/")
+                print("Processing ChartQA dataset...")
+                
+                data_splits = DatasetDict({
+                    "train": None,
+                    "val": None,
+                    "test": None,
+                })
+
+                splits = ["train", "val", "test"]
+                for splt in splits:
+                    print("Processing split: ",splt)
+                    all_data = []
+                    data_path = Path(chartqa_root,splt,splt+"_augmented.json")
+                    with open(data_path, "r", encoding="utf-8") as f:
+                        data = json.load(f)
+                    for dp in tqdm(data):
+                        sample = {}
+                        img_path = Path(chartqa_root,splt,"png",dp["imgname"])
+                        sample["image"] = PILImage.open(str(img_path)).convert("RGB")
+                        sample["query"] = dp["query"]
+                        sample["label"] = dp["label"]
+                        sample["human_or_machine"] = 1
+                        all_data.append(sample)
+                    data_path = Path(chartqa_root,splt,splt+"_human.json")
+                    with open(data_path, "r", encoding="utf-8") as f:
+                        data = json.load(f)
+                    for dp in tqdm(data):
+                        sample = {}
+                        img_path = Path(chartqa_root,splt,"png",dp["imgname"])
+                        sample["image"] = PILImage.open(str(img_path)).convert("RGB")
+                        sample["query"] = dp["query"]
+                        sample["label"] = dp["label"]
+                        sample["human_or_machine"] = 0
+                        all_data.append(sample)
+
+                    data_splits[splt] = Dataset.from_list(all_data)
+                data_splits.save_to_disk(cache_dir+"/chartqa_dataset_src")
+
+            data = dataset[split]
+            return data
+        
+
         if self.dataset_name == "chartqapro":
             dataset = load_dataset("ahmed-masry/ChartQAPro", cache_dir = cache_dir)
             data = dataset[split]
@@ -104,7 +153,7 @@ class ChartDataset:
             return figqa[split]
 
     def create_loader(self, data, bsz=1):
-        if self.dataset_name == "chartqa":
+        if self.dataset_name == "chartqa" or self.dataset_name == "chartqa-src":
             dataloader = DataLoader(data, batch_size = bsz, collate_fn = self.collate_fn_chartqa)
         elif self.dataset_name == "chartqapro":
             dataloader = DataLoader(data, batch_size = bsz, collate_fn = self.collate_fn_chartqapro)
@@ -122,7 +171,7 @@ class ChartDataset:
         for idx in range(len(batch)):
             image_batch.append(batch[idx]['image'])
             query_batch.append(batch[idx]['query'])
-            label_batch.append(batch[idx]['label'][0])
+            label_batch.append(batch[idx]['label'])
             machine_human_batch.append(batch[idx]['human_or_machine'])
 
         return image_batch, query_batch, label_batch, machine_human_batch
@@ -290,21 +339,25 @@ class ChartDataset:
             },]
 
     def load_pref_data(self):
-        path1 = "./pref-data/base-llava-1.6-sft-hf-dset-hard-negatives"
-        path2 = "./pref-data/llava-1.6-hf-dset-tabular"
+        # path1 = "./pref-data/base-llava-1.6-sft-hf-dset-hard-negatives"
+        # path2 = "./pref-data/llava-1.6-hf-dset-tabular"
 
-        # path1 = "./pref-data/base-qwen-7b-hf-dset-hard-negatives"
+        path1 = "./pref-data/base-qwen-7b-hf-dset-hard-negatives"
         # path2 = "./pref-data/base-qwen-7b-hf-dset-tabular"
+        # path2 = "./pref-data/qwen-7b-hf-dset-rationale-table"
+        path2 = "./pref-data/qwen-7b-hf-dset-rationale-table-unichart"
+
         if os.path.exists(path1):
             pref_dataset1 = load_from_disk(path1)
             pref_dataset2 = load_from_disk(path2)
             # pref_dataset = pref_dataset2
             pref_dataset = concatenate_datasets([pref_dataset1, pref_dataset2])
+            pref_data = pref_dataset.shuffle(seed=seed)
     
         else:
             logging.info("Pref Dataset not found, loading from pickle file... (can take a while)")
-            with open("./pref-data/base-llava-1.6-sft", "rb") as f:
-                pref_data = pickle.load(f)
+            # with open("./pref-data/base-llava-1.6-sft", "rb") as f:
+            #     pref_data = pickle.load(f)
 
             formatted_data = []
             for row in tqdm(pref_data):
@@ -328,6 +381,7 @@ class ChartDataset:
             pref_dataset.save_to_disk("./pref-data/base-llava-1.6-sft-hf-dset")
             logging.info("Pref Dataset Created")
         
+
         return pref_dataset
 
     def pref_format(self, example):

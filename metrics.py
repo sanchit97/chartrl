@@ -15,46 +15,44 @@ def exact_match(pred, label):
     return tot
 
 
-def _norm(text: str) -> str:
-    """Case-fold, trim, collapse spaces."""
-    return re.sub(r'\s+', ' ', text.strip().lower()[::-1].replace('.', '', 1)[::-1])
-
 def _is_num(t: str) -> bool:
     try:
         float(t)
         return True
     except ValueError:
         return False
+    
+def _to_float(text: str):
+    try:
+        return float(text.rstrip('%')) / 100.0 if text.endswith('%') else float(text)
+    except ValueError:
+        return None
 
 def relaxed_accuracy(
-    refs: List[str],
-    preds: List[str],
+    targets: List[str],
+    predictions: List[str],
     tol: float = 0.05
 ) -> Tuple[float, List[int]]:
     """
     Return (accuracy, per-item correctness flags).
     """
-    assert len(refs) == len(preds), "Mismatched list lengths"
     flags = []
-    for ref, pred in zip(refs, preds):
-        r, p = _norm(ref), _norm(pred)
-        if _is_num(r):                         # numeric case
+    for target, prediction in zip(targets, predictions):
+        def _to_float(text: str):
             try:
-                rn, pn = float(r), float(p)
-                ok = (abs(pn - rn) / abs(rn)) <= tol if rn else pn == 0
-            except ValueError:                 # pred not numeric → wrong
-                ok = False
-        else:                                  # string case
-            ok = (r == p)
+                return float(text.rstrip('%')) / 100.0 if text.endswith('%') else float(text)
+            except ValueError:
+                return None
+        prediction, target = str(prediction).strip(), str(target).strip()
+        p_float, t_float = _to_float(prediction), _to_float(target)
+
+        # NB: the "and t_float" check is what prevents ZeroDivisionError
+        if p_float is not None and t_float:
+            rel_change = abs(p_float - t_float) / abs(t_float)
+            ok = rel_change <= tol
+        else:
+            ok = prediction.lower() == target.lower()
+
         flags.append(int(ok))
 
     return sum(flags), flags #/ len(flags) if flags else 0.0, flags
-
-# worse version used by unichart (dont use it)
-# def relaxed_accuracy(refs, preds):
-#     try:
-#         gt = float(refs[0])
-#         pred = float(preds[0])
-#         return [int(abs(gt - pred) / abs(gt) <= 0.05)]
-#     except:
-#         return [int(str(refs[0]).lower() == str(preds[0]).lower())]

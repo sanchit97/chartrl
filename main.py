@@ -81,6 +81,10 @@ def main():
         if args.mode == "sft":
             eval_dataset = dataset.load_chart_dataset(split = "val") 
 
+    if args.dataset_name == "chartqa-src":
+        dataset = ChartDataset("chartqa-src", processor=processor)
+        test_dataset = dataset.load_chart_dataset(split = "test")
+
     elif args.dataset_name == "chartqapro":
         dataset = ChartDataset("chartqapro", processor=processor)
         test_dataset = dataset.load_chart_dataset(split = "test")
@@ -140,9 +144,12 @@ def main():
             # adapter_path = "qwen-2b-train-chartqa-dpo-no-sft-v2-ocr-tabular-ocr-qwen-data-high-caphinge/checkpoint-8000"
             
             
-            # adapter_path = "qwen-7b-train-chartqa-dpo-base-ocr-tabular-rationaleshinge/checkpoint-9000"
-            # adapter_path = "qwen-2b-train-chartqa-dpo-base-ocr-tabular-rationaleshinge/checkpoint-21018"
-            adapter_path = "qwen-2b-train-chartqa-dpo-base-ocr-tabular-rationales-unicharthinge/checkpoint-14000"
+            adapter_path = "qwen-7b-train-chartqa-dpo-base-ocr-tabular-rationaleshinge/checkpoint-21018"
+
+            # Data gen
+            # adapter_path = "qwen-2b-train-chartqa-dpo-base-ocr-tabular-rationaleshinge/checkpoint-21018"\
+            # Unichart tables
+            # adapter_path = "qwen-2b-train-chartqa-dpo-base-ocr-tabular-rationales-unicharthinge/checkpoint-14000"
         
             model = PeftModel.from_pretrained(model, adapter_path)
             model = model.merge_and_unload()
@@ -151,6 +158,10 @@ def main():
 
 
         em_correct, ra_correct, tot_bleuscore, total = 0, 0, 0, 0
+
+        aug_correct, aug_total = 0, 0
+        human_correct, human_total = 0, 0
+
 
         wrongs = []
         pref_data = []
@@ -193,6 +204,24 @@ def main():
             em_correct += exact_match(batch[2], pred)
             # Realaxed accuracy
             ra = relaxed_accuracy(batch[2],pred)
+
+            if args.dataset_name == "chartqa" or args.dataset_name == "chartqa-src":
+                # Augmented accuracy
+                for i in range(len(batch[3])):
+                    if batch[3][i]==1:
+                        aug_total += 1
+                        if ra[1][i]==1:
+                            aug_correct += 1
+                        
+
+                # Human accuracy
+                for i in range(len(batch[3])):
+                    if batch[3][i]==0:
+                        human_total += 1
+                        if ra[1][i]==1:
+                            human_correct += 1
+
+
             ra_correct += ra[0]
             
                
@@ -204,7 +233,13 @@ def main():
 
             print("EM: ", em_correct/total)
             print("Relaxed Accuracy: ", ra_correct/total)
-            print("BLEU Score: ", tot_bleuscore/total)
+            
+            print("Aug Accuracy:", aug_correct/aug_total ) if aug_total>0 else print("Aug Accuracy: No aug samples")
+            print("Human Accuracy:", human_correct/human_total ) if human_total>0 else print("Human Accuracy: No human samples")
+            print("Average Accuracy:", 0.5*(aug_correct/aug_total + human_correct/human_total)) if aug_total>0 and human_total>0 else print("Average Accuracy: NA")
+
+
+            # print("BLEU Score: ", tot_bleuscore/total)
         
 
         # TODO: Same as above, more elegant way of handling this
