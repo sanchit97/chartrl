@@ -66,9 +66,9 @@ def main():
 
     if args.mode == "sft" or args.mode == "dpo":
         # Set the PEFT 
-        if args.vlm_name == "qwen-7b":
-                target_modules=["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"]
-        elif args.vlm_name == "internvl-8b":
+        if "qwen" in args.vlm_name:
+            target_modules=["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"]
+        elif "intern" in args.vlm_name:
             target_modules=["wqkv", "wo", "w1", "w2", "w3"]
         else:
             target_modules = None # This targets all possible layers/modules (llava type models, maybe pali #TODO check)
@@ -129,7 +129,6 @@ def main():
 
         # DPO adapter
         if args.dpo_lora:
-            # adapter_path = "llava-1.6-train-chartqa-dpo-sft-v5-hardneg-beta-0.3/checkpoint-4000"
             # adapter_path = "qwen-7b-train-chartqa-dpo-no-sft-v1-hardneg-beta-0.3-test/checkpoint-7000"
             # adapter_path = "qwen-7b-train-chartqa-dpo-no-sft-v1-hardneg-beta-0.3-ipo/checkpoint-7000"
             # adapter_path = "qwen-7b-train-chartqa-dpo-no-sft-v1-hardneg-beta-0.3-hinge/checkpoint-7000"
@@ -137,8 +136,14 @@ def main():
             # adapter_path = "qwen-7b-train-chartqa-dpo-no-sft-v1-hardneg-beta-0.3-apo_zero/checkpoint-7000"
             # adapter_path = args.dpo_lora
 
-            adapter_path = "qwen-7b-train-chartqa-dpo-no-sft-v2-ocr-tabular-ocr-qwen-data-high-caphinge/checkpoint-20000"
-            # adapter_path = "llava-1.6-dpo-sft-v2-ocr-tabular-high-cap-hinge/checkpoint-20000"
+            # adapter_path = "qwen-7b-train-chartqa-dpo-no-sft-v2-ocr-tabular-ocr-qwen-data-high-caphinge/checkpoint-15000"
+            # adapter_path = "qwen-2b-train-chartqa-dpo-no-sft-v2-ocr-tabular-ocr-qwen-data-high-caphinge/checkpoint-8000"
+            
+            
+            # adapter_path = "qwen-7b-train-chartqa-dpo-base-ocr-tabular-rationaleshinge/checkpoint-9000"
+            # adapter_path = "qwen-2b-train-chartqa-dpo-base-ocr-tabular-rationaleshinge/checkpoint-21018"
+            adapter_path = "qwen-2b-train-chartqa-dpo-base-ocr-tabular-rationales-unicharthinge/checkpoint-14000"
+        
             model = PeftModel.from_pretrained(model, adapter_path)
             model = model.merge_and_unload()
 
@@ -153,7 +158,7 @@ def main():
         logging.info("Starting evaluation on {} samples".format(len(test_dataset)))
         logging.info("Using CoT: {}".format(args.cot))
 
-        loader = dataset.create_loader(test_dataset, bsz=32)
+        loader = dataset.create_loader(test_dataset, bsz=8)
 
         if args.icl:
             path = "./icl-examples/"+args.dataset_name+"-icl_samples.pkl"
@@ -169,7 +174,12 @@ def main():
             if args.icl:
                 pred, rationale = get_vlm_output(model, processor, batch[0], batch[1], args.cot, icl_samples)
             else:
-                pred, rationale = get_vlm_output(model, processor, batch[0], batch[1], args.cot)
+                if args.vlm_name in ["qwen-2b"]:
+                    logging.info("Using explicit model device setting")
+                    pred, rationale = get_vlm_output(model, processor, batch[0], batch[1], args.cot, model_device="cuda")
+                else:
+                    logging.info("Using automatic model device setting")
+                    pred, rationale = get_vlm_output(model, processor, batch[0], batch[1], args.cot)
             print(pred)
             print(batch[2])
             print(rationale)
@@ -180,25 +190,12 @@ def main():
             #     bleu_score += sacrebleu.corpus_bleu([batch[2][i]], [[pred[i]]]).score
             tot_bleuscore += bleu_score
             # Exact match
-            em_correct += exact_match(pred, batch[2])
+            em_correct += exact_match(batch[2], pred)
             # Realaxed accuracy
-            ra = relaxed_accuracy(pred, batch[2])
+            ra = relaxed_accuracy(batch[2],pred)
             ra_correct += ra[0]
             
-
-            # TODO: More elegant way of handling this
-            # if visualize:
-            # for i in range(len(ra[1])):
-            #     if ra[1][i] == 0:
-            #         wrongs.append((batch[0][i], batch[1][i], batch[2][i], pred[i]))
-            # if pref_data:
-
-            # for i in range(len(pred)):
-            #     # if relaxed_accuracy( [pred[i]], [batch[2][i]])[0] == 0:
-            #     pref_data.append([batch[0][i], batch[1][i], batch[2][i], batch[3][i], pred[i]])
-            # print(len(pref_data))
-
-                
+               
             #ROUGE-L
             #F1
             #BLEU
@@ -231,8 +228,6 @@ def main():
                     bnb_4bit_compute_dtype=torch.bfloat16)
         
         
-        
-
         peft_config = LoraConfig(
                     lora_alpha=256,
                     lora_dropout=0.05,
@@ -285,7 +280,7 @@ def main():
         )
 
         training_args.remove_unused_columns = False  # Keep unused columns in dataset
-        training_args.dataloader_num_workers = 4  # Number of workers for data loading
+        # training_args.dataloader_num_workers = 4  # Number of workers for data loading
 
         logging.info("Training arguments set up")
 
@@ -325,61 +320,45 @@ def main():
             model = model.merge_and_unload()
             logging.info("Loaded model with SFT adapters from {}".format(adapter_path))
 
-        model = PeftModel.from_pretrained(model, adapter_path)
-        model = model.merge_and_unload()
-
-        # 1. Patch get/set_input_embeddings if needed
-        # if not hasattr(model, "get_input_embeddings"):
-        #     model.get_input_embeddings = MethodType(lambda self: self.model.embed_tokens, model)
-        #     model.set_input_embeddings = MethodType(lambda self, x: setattr(self.model, "embed_tokens", x), model)
-
-        # # 2. Patch enable_input_require_grads if needed
-        # if not hasattr(model, "enable_input_require_grads"):
-        #     def _enable_input_require_grads(self):
-        #         self.get_input_embeddings().register_forward_hook(
-        #             lambda _, __, out: out.requires_grad_(True)
-        #         )
-        #     model.enable_input_require_grads = MethodType(_enable_input_require_grads, model)
-
-
-        # adapter_path = "qwen-7b-train-chartqa-v4-all-warmup"
-        # model = PeftModel.from_pretrained(model, adapter_path)
-        # model = model.merge_and_unload() 
-        # breakpoint()
-        # dataset = ChartDataset("chartqa", processor=processor)
         pref_dataset = dataset.load_pref_data()
+        eval_dataset = dataset.load_pref_data().select(range(512))
+
         # pref_dataset = pref_dataset.map(dataset.pref_format, batched=True, batch_size=32, num_proc=4)
         # train_dataset = dataset.load_chart_dataset(split = "train")
         # eval_dataset = dataset.load_pref_data()[:200]
 
-        breakpoint()
+        # breakpoint()
 
         lossname = "hinge"
         logging.info("Loaded model, pref and eval datasets")
         logging.info("Using:", lossname)
+
                     
         dpo_peft_config = LoraConfig(
                     lora_alpha=256,
                     lora_dropout=0.05,
                     r=256,
                     bias="none",
-                    # TODO: Ablations on this yielded QV==ALL, lets keep all for now
-                    # target_modules=["q_proj", "v_proj"],
-                    # target_modules=["gate_proj", "up_proj", "down_proj"],
-                    # target_modules = ["wqkv", "wo"], #internvl
-                    target_modules = ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"]
+                    target_modules = target_modules
                     )
 
 
         peft_model = get_peft_model(model, dpo_peft_config)
         print(peft_model.print_trainable_parameters())
 
+
+
+        # Check this thoroughly
+        peft_model.config.use_cache = False
+
+
         logging.info("Loaded model+LORA adapters")
+
 
         training_args = DPOConfig(
         # output_dir=model_name+"-train-chartqa-dpo-sft-v1-hardneg-beta-0.3-test",  # Directory to save the model
-        # output_dir=args.vlm_name+"-train-chartqa-dpo-no-sft-v2-ocr-tabular-ocr-qwen-data-high-cap"+lossname,  # Directory to save the model
-        output_dir=args.vlm_name+"-dpo-sft-v2-ocr-tabular-high-cap-"+lossname,  # Directory to save the model
+        output_dir=args.vlm_name+"-train-chartqa-dpo-base-ocr-tabular-rationales-unichart"+lossname,  # Directory to save the model
+        # output_dir=args.vlm_name+"-dpo-sft-v2-ocr-tabular-high-cap-"+lossname,  # Directory to save the model
         bf16=True,
         gradient_checkpointing=True,
         per_device_train_batch_size=8,
@@ -388,8 +367,8 @@ def main():
         dataset_num_proc=32,  # tokenization will use 32 processes
         dataloader_num_workers=32,  # data loading will use 32 workers
         logging_steps=10,
-        # evaluation_strategy="steps",
-        # eval_steps=500,
+        evaluation_strategy="steps",
+        eval_steps=1000,
         beta=0.3,  # DPO beta parameter (default: 0.1)
         loss_type = lossname, # try different stuff
         )
@@ -398,7 +377,7 @@ def main():
             ref_model=None,  # not needed when using peft
             args=training_args,
             train_dataset=pref_dataset,
-            # eval_dataset=eval_dataset,
+            eval_dataset=eval_dataset,
             tokenizer=processor,
             peft_config=dpo_peft_config,
         )
@@ -410,37 +389,3 @@ def main():
 
 main()
 
-
-
-# elif args.dataset_name == "all-ra":
-    #     dataset = ChartDataset("chartqa", processor=processor)
-    #     test_dataset_chartqa = dataset.load_chart_dataset(split = "test")
-    #     dataset = PlotQADataset("plotqa", processor=processor)
-    #     test_dataset = dataset.load_plotqa_dataset(split = "test")
-    #     test_dataset = test_dataset.shuffle(seed=seed)
-    #     test_dataset_plotqa = test_dataset.select(range(5000))
-    #     dataset = ChartDataset("figqa", processor=processor)
-    #     test_dataset_figqa = dataset.load_chart_dataset(split = "test")
-
-    # Load the dataset and model for SFT
-
-        # dataset = ChartDataset("chartqa", processor=processor)
-        # train_dataset = dataset.load_chart_dataset(split = "train")
-        # eval_dataset = dataset.load_chart_dataset(split = "val")
-
-        
-        # dataset = PlotQADataset("plotqa", processor=processor)
-        # train_dataset = dataset.load_plotqa_dataset(split = "train")
-        # train_dataset = train_dataset.shuffle(seed=seed, keep_in_memory=True)
-        # train_dataset = train_dataset.select(range(50000))
-        # eval_dataset = dataset.load_plotqa_dataset(split = "validation")
-        # eval_dataset = eval_dataset.shuffle(seed=seed, keep_in_memory=True)
-        # eval_dataset = eval_dataset.select(range(5000))
-
-
-        # dataset = ChartToTextDataset("chartqa", processor=processor)
-        # train_dataset = dataset.load(split = "train")
-        # eval_dataset = dataset.load(split = "test")
-
-        # train_dataset = [format_data(sample) for sample in train_dataset]
-        # eval_dataset = [format_data(sample) for sample in eval_dataset]
