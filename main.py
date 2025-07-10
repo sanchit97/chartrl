@@ -121,10 +121,8 @@ def main():
         # SFT adapter
         if args.sft_lora:
             # adapter_path = args.sft_lora
-            # adapter_path = "llava-1.6-train-plotqa-v0"
-            adapter_path = "llava-1.6-train-chartqa"
-            # adapter_path = "/mnt/home/sanchit/Qwen2-VL-Finetune/output/chartqa_lora-v0"
-            # adapter_path = "/mnt/home/sanchit/Qwen2-VL-Finetune/output/chartqa_lora-v0"
+            adapter_path = "/mnt/home/sanchit/Qwen2-VL-Finetune/output/chartqa_lora-v0"
+            # adapter_path = "/mnt/home/sanchit/Qwen2-VL-Finetune/output/chartqa_lora-v0-train-all"
             # adapter_path = "/mnt/home/sanchit/Qwen2-VL-Finetune/output/chartqa_lora-v0"
             # adapter_path = "llava-1.6-base-train-charttotext"
             model = PeftModel.from_pretrained(model, adapter_path)
@@ -144,12 +142,15 @@ def main():
             # adapter_path = "qwen-2b-train-chartqa-dpo-no-sft-v2-ocr-tabular-ocr-qwen-data-high-caphinge/checkpoint-8000"
             
             
-            adapter_path = "qwen-7b-train-chartqa-dpo-base-ocr-tabular-rationaleshinge/checkpoint-21018"
+            # adapter_path = "qwen-7b-train-chartqa-dpo-base-ocr-tabular-rationaleshinge/checkpoint-21018"
+            # adapter_path = "qwen-7b-train-chartqa-dpo-base-ocr-tabular-rationales-unicharthinge/checkpoint-28500"
+
+            adapter_path = "qwen-7b-train-chartqa-dpo-no-sft-v1-tabularhinge/checkpoint-14490"
 
             # Data gen
-            # adapter_path = "qwen-2b-train-chartqa-dpo-base-ocr-tabular-rationaleshinge/checkpoint-21018"\
+            # adapter_path = "qwen-2b-train-chartqa-dpo-base-ocr-tabular-rationaleshinge/checkpoint-21018"
             # Unichart tables
-            # adapter_path = "qwen-2b-train-chartqa-dpo-base-ocr-tabular-rationales-unicharthinge/checkpoint-14000"
+            # adapter_path = "qwen-2b-train-chartqa-dpo-base-ocr-tabular-rationales-unicharthinge/checkpoint-65000"
         
             model = PeftModel.from_pretrained(model, adapter_path)
             model = model.merge_and_unload()
@@ -169,7 +170,7 @@ def main():
         logging.info("Starting evaluation on {} samples".format(len(test_dataset)))
         logging.info("Using CoT: {}".format(args.cot))
 
-        loader = dataset.create_loader(test_dataset, bsz=8)
+        loader = dataset.create_loader(test_dataset, bsz=4)
 
         if args.icl:
             path = "./icl-examples/"+args.dataset_name+"-icl_samples.pkl"
@@ -203,7 +204,10 @@ def main():
             # Exact match
             em_correct += exact_match(batch[2], pred)
             # Realaxed accuracy
-            ra = relaxed_accuracy(batch[2],pred)
+            if args.dataset_name == "chartqapro":
+                ra = relaxed_accuracy(batch[2],pred, True)
+            else:
+                ra = relaxed_accuracy(batch[2],pred)
 
             if args.dataset_name == "chartqa" or args.dataset_name == "chartqa-src":
                 # Augmented accuracy
@@ -358,16 +362,9 @@ def main():
         pref_dataset = dataset.load_pref_data()
         eval_dataset = dataset.load_pref_data().select(range(512))
 
-        # pref_dataset = pref_dataset.map(dataset.pref_format, batched=True, batch_size=32, num_proc=4)
-        # train_dataset = dataset.load_chart_dataset(split = "train")
-        # eval_dataset = dataset.load_pref_data()[:200]
-
-        # breakpoint()
-
         lossname = "hinge"
         logging.info("Loaded model, pref and eval datasets")
-        logging.info("Using:", lossname)
-
+        logging.info("Using: "+lossname)
                     
         dpo_peft_config = LoraConfig(
                     lora_alpha=256,
@@ -376,24 +373,16 @@ def main():
                     bias="none",
                     target_modules = target_modules
                     )
-
-
         peft_model = get_peft_model(model, dpo_peft_config)
         print(peft_model.print_trainable_parameters())
-
-
-
-        # Check this thoroughly
         peft_model.config.use_cache = False
-
-
         logging.info("Loaded model+LORA adapters")
-
 
         training_args = DPOConfig(
         # output_dir=model_name+"-train-chartqa-dpo-sft-v1-hardneg-beta-0.3-test",  # Directory to save the model
-        output_dir=args.vlm_name+"-train-chartqa-dpo-base-ocr-tabular-rationales-unichart"+lossname,  # Directory to save the model
+        # output_dir=args.vlm_name+"-train-chartqa-dpo-base-ocr-tabular-rationales-unichart"+lossname,  # Directory to save the model
         # output_dir=args.vlm_name+"-dpo-sft-v2-ocr-tabular-high-cap-"+lossname,  # Directory to save the model
+        output_dir=args.vlm_name+"random-test"+lossname,  # Directory to save the model
         bf16=True,
         gradient_checkpointing=True,
         per_device_train_batch_size=8,
@@ -401,8 +390,8 @@ def main():
         num_train_epochs=3,
         dataset_num_proc=32,  # tokenization will use 32 processes
         dataloader_num_workers=32,  # data loading will use 32 workers
-        logging_steps=10,
-        evaluation_strategy="steps",
+        logging_steps=20,
+        eval_strategy="steps",
         eval_steps=1000,
         beta=0.3,  # DPO beta parameter (default: 0.1)
         loss_type = lossname, # try different stuff
@@ -413,14 +402,52 @@ def main():
             args=training_args,
             train_dataset=pref_dataset,
             eval_dataset=eval_dataset,
-            tokenizer=processor,
+            processing_class = processor,
             peft_config=dpo_peft_config,
         )
 
         trainer.train()
 
 
+    if args.mode == "grpo":
+        # Setup and imports
+        from trl import (GRPOConfig, GRPOTrainer, get_peft_config)
+        from grpo_utils import format_reward, accuracy_reward
+        os.environ["WANDB_CONSOLE"] = "wrap" 
+        wandb.init(project="chartrl", entity="chartrl")
 
+        if args.sft_lora:
+            adapter_path = "/mnt/home/sanchit/Qwen2-VL-Finetune/output/chartqa_lora-v0"
+            model = PeftModel.from_pretrained(model, adapter_path)
+            model = model.merge_and_unload()
+            logging.info("Loaded model with SFT adapters from {}".format(adapter_path))
+
+        pref_dataset = dataset.load_pref_data()
+        eval_dataset = dataset.load_pref_data().select(range(512))
+
+        logging.info("Loaded model, pref and eval datasets")
+
+        grpo_peft_config = LoraConfig(
+                    lora_alpha=256,
+                    lora_dropout=0.05,
+                    r=256,
+                    bias="none",
+                    target_modules = target_modules
+                    )
+
+        trainer = GRPOTrainer(
+            model=model,
+            args=training_args,
+            reward_funcs=[format_reward, accuracy_reward],
+            train_dataset=train_dataset,
+            eval_dataset=eval_dataset,
+            processing_class=processor,
+            peft_config=grpo_peft_config,
+        )
+        
+
+        trainer.train()
+                    
 
 main()
 

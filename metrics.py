@@ -31,19 +31,23 @@ def _to_float(text: str):
 def relaxed_accuracy(
     targets: List[str],
     predictions: List[str],
-    tol: float = 0.05
+    tol: float = 0.05,
+    unanswerable = False,
 ) -> Tuple[float, List[int]]:
     """
     Return (accuracy, per-item correctness flags).
     """
     flags = []
     for target, prediction in zip(targets, predictions):
+        if target == "Unanswerable" and unanswerable:
+            flags.append(int(1))
+            continue
         def _to_float(text: str):
             try:
                 return float(text.rstrip('%')) / 100.0 if text.endswith('%') else float(text)
             except ValueError:
                 return None
-        prediction, target = str(prediction).strip(), str(target).strip()
+        prediction, target = str(prediction).strip(), str(target).strip().strip(".")
         p_float, t_float = _to_float(prediction), _to_float(target)
 
         # NB: the "and t_float" check is what prevents ZeroDivisionError
@@ -55,4 +59,4 @@ def relaxed_accuracy(
 
         flags.append(int(ok))
 
-    return sum(flags), flags #/ len(flags) if flags else 0.0, flags
+    return sum(flags), flags 
