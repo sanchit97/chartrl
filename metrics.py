@@ -39,7 +39,7 @@ def relaxed_accuracy(
     """
     flags = []
     for target, prediction in zip(targets, predictions):
-        if target == "Unanswerable" and unanswerable:
+        if target.lower() == "unanswerable" and unanswerable:
             flags.append(int(1))
             continue
         def _to_float(text: str):

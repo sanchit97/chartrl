@@ -170,7 +170,7 @@ def main():
         logging.info("Starting evaluation on {} samples".format(len(test_dataset)))
         logging.info("Using CoT: {}".format(args.cot))
 
-        loader = dataset.create_loader(test_dataset, bsz=4)
+        loader = dataset.create_loader(test_dataset, bsz=16)
 
         if args.icl:
             path = "./icl-examples/"+args.dataset_name+"-icl_samples.pkl"

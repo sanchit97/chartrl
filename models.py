@@ -13,9 +13,8 @@ os.environ["FLASH_ATTENTION_2_ENABLED"] = "1"
 
 from datasets import Dataset, load_dataset, load_from_disk
 
-from transformers import Blip2Processor, Blip2ForConditionalGeneration, InstructBlipProcessor, InstructBlipForConditionalGeneration
-from transformers import LlavaForConditionalGeneration, LlavaNextProcessor, LlavaNextForConditionalGeneration, PaliGemmaForConditionalGeneration, Qwen2VLForConditionalGeneration
-from transformers import AutoModel, AutoProcessor, AutoTokenizer, AutoModelForImageTextToText, AutoModelForVisualQuestionAnswering,AutoModelForCausalLM, AutoModelForZeroShotObjectDetection, Qwen2VLProcessor
+from transformers import LlavaNextProcessor, LlavaNextForConditionalGeneration, PaliGemmaForConditionalGeneration, Qwen2VLForConditionalGeneration, Qwen2_5_VLProcessor
+from transformers import AutoModel, AutoProcessor, AutoTokenizer, AutoModelForImageTextToText, Qwen2VLProcessor,Qwen2_5_VLForConditionalGeneration
 from transformers import pipeline
 
 from transformers import DonutProcessor, VisionEncoderDecoderModel
@@ -75,6 +74,14 @@ def load_vlm_model(model_type):
         processor = Qwen2VLProcessor.from_pretrained("Qwen/Qwen2-VL-2B-Instruct", trust_remote_code=True, cache_dir = cache_dir)
         # model = AutoModelForImageTextToText.from_pretrained("Qwen/Qwen2-VL-2B-Instruct", device_map={"": 0}, cache_dir = cache_dir, attn_implementation = "flash_attention_2", torch_dtype=torch.bfloat16)
         model = Qwen2VLForConditionalGeneration.from_pretrained("Qwen/Qwen2-VL-2B-Instruct", torch_dtype="auto", device_map="auto",attn_implementation = "flash_attention_2", trust_remote_code=True, cache_dir = cache_dir)
+
+    if model_type == "qwen2-5-3b":
+        processor = Qwen2_5_VLProcessor.from_pretrained("Qwen/Qwen2.5-VL-3B-Instruct", padding_side="left", trust_remote_code=True, cache_dir = cache_dir)
+        model = Qwen2_5_VLForConditionalGeneration.from_pretrained("Qwen/Qwen2.5-VL-3B-Instruct", torch_dtype="auto", device_map="auto", attn_implementation = "flash_attention_2", trust_remote_code=True, cache_dir = cache_dir)
+
+    if model_type == "qwen2-5-7b":
+        processor = Qwen2_5_VLProcessor.from_pretrained("Qwen/Qwen2.5-VL-7B-Instruct", padding_side="left", trust_remote_code=True, cache_dir = cache_dir)
+        model = Qwen2_5_VLForConditionalGeneration.from_pretrained("Qwen/Qwen2.5-VL-7B-Instruct", torch_dtype="auto", device_map="auto", attn_implementation = "flash_attention_2", trust_remote_code=True, cache_dir = cache_dir)
 
     if model_type == "internvl-8b":
         processor = AutoTokenizer.from_pretrained("OpenGVLab/InternVL2_5-8B", device_map="auto",cache_dir = cache_dir, trust_remote_code=True,torch_dtype=torch.bfloat16)

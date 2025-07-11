@@ -4,15 +4,10 @@ Repo for RL post-training on Chart data
 
 ## Main Inference Results
 
-| Model                     | Training  | ChartQA (RA) | PlotQA (RA) |
-|---------------------------|-----------|-------------:|------------:|
-| Llava-Next (7 B)          | Base      | 51.12        | 39.38       |
-| Llava-Next (7 B)          | SFT       | 66.12        |             |
-| Llava-Next (7 B)          | DPO - factuality| 66.36  |             |
-| Qwen-2VL-Instruct         | Base (COT)     | 69.96        | 61.12       |
-| Qwen-2VL-Instruct         | SFT  (COT)     | 69.44*        |             |
-| Qwen-2VL-Instruct         | DPO - factuality (COT)| 70.16  |             |
-| Qwen-2VL-Instruct         | DPO - all | 72.24  |             |
+| Model                     | Strategy  | ChartQA (RA) | PlotQA (RA)  | FigQA (RA)
+|---------------------------|-----------|-------------:|-------------:|------------:
+| Qwen-2VL-Instruct         | Base      | 75.00        | 83.36        |
+| Qwen-2VL-Instruct         | DPO-Direct| 75.48 (+0.48)| 83.50 (+0.14)|
 
 ## Loss ablations for DPO
 

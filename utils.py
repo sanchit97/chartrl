@@ -34,7 +34,7 @@ def get_vlm_output(model, processor, image, query, cot = False, icl_samples=None
     messages = []
     for q,im in zip(query,image):
         # breakpoint()
-        im = resize_up(im)
+        # im = resize_up(im)
         if "llava" in model.__class__.__name__.lower():
             messages.append([
                 {
@@ -53,8 +53,7 @@ def get_vlm_output(model, processor, image, query, cot = False, icl_samples=None
             # Your task is to analyze the provided chart image and respond to queries with concise answers, usually a single word, number, or short phrase.
             # The charts include a variety of types (e.g., line charts, bar charts) and contain colors, labels, and text.
             # Focus on delivering accurate, succinct answers based on the visual information. Avoid additional explanation unless absolutely necessary."""
-            # system_message = ""
-            
+            system_message = ""
             messages.append([
             # {
             #     "role": "system",
@@ -105,11 +104,12 @@ def get_vlm_output(model, processor, image, query, cot = False, icl_samples=None
 
 
     elif "qwen" in model.__class__.__name__.lower():
+        # breakpoint()
         text = processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
         image_inputs, video_inputs = process_vision_info(messages)
         inputs = processor(
             text=text,
-            images=image_inputs,
+            images=[image_inputs],
             videos=video_inputs,
             padding=True,
             return_tensors="pt",
@@ -128,10 +128,10 @@ def get_vlm_output(model, processor, image, query, cot = False, icl_samples=None
             out_ids[len(in_ids) :] for in_ids, out_ids in zip(inputs.input_ids, generated_ids)
         ]
         out_text = processor.batch_decode(
-            generated_ids_trimmed, skip_special_tokens=True
+            generated_ids_trimmed, skip_special_tokens=True, clean_up_tokenization_spaces=False
         )
 
-        if cot:
+        if cot: 
             pred_text = [out.split("### Answer:")[-1].strip() for out in out_text]
             rationale = [out.split("### Reason:")[-1].split("### Answer")[0].strip("\n") for out in out_text]
             out_text = pred_text
