@@ -47,7 +47,8 @@ def relaxed_accuracy(
                 return float(text.rstrip('%')) / 100.0 if text.endswith('%') else float(text)
             except ValueError:
                 return None
-        prediction, target = str(prediction).strip(), str(target).strip().strip(".")
+        prediction = prediction[:-1] if prediction.endswith(".") else prediction
+        prediction, target = str(prediction).strip(), str(target).strip()
         p_float, t_float = _to_float(prediction), _to_float(target)
 
         # NB: the "and t_float" check is what prevents ZeroDivisionError

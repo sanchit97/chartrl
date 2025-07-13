@@ -56,7 +56,7 @@ def parse_args():
 
     return parser.parse_args()
 
-def main():
+if __name__ == "__main__":
     # Parse command line arguments
     args = parse_args()
 
@@ -64,7 +64,7 @@ def main():
     model, processor = load_vlm_model(args.vlm_name)
     logging.info("Loaded model and processor")
 
-    if args.mode == "sft" or args.mode == "dpo":
+    if args.mode == "sft" or args.mode == "dpo" or args.mode == "grpo":
         # Set the PEFT 
         if "qwen" in args.vlm_name:
             target_modules=["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"]
@@ -83,6 +83,14 @@ def main():
 
     if args.dataset_name == "chartqa-src":
         dataset = ChartDataset("chartqa-src", processor=processor)
+        test_dataset = dataset.load_chart_dataset(split = "test")
+        if args.mode in ["sft", "dpo", "grpo"] or args.icl:
+            train_dataset = dataset.load_chart_dataset(split = "train")
+        if args.mode in ["sft", "dpo", "grpo"]:
+            eval_dataset = dataset.load_chart_dataset(split = "val") 
+
+    if args.dataset_name == "chartfc":
+        dataset = ChartDataset("chartfc", processor=processor)
         test_dataset = dataset.load_chart_dataset(split = "test")
 
     elif args.dataset_name == "chartqapro":
@@ -121,7 +129,9 @@ def main():
         # SFT adapter
         if args.sft_lora:
             # adapter_path = args.sft_lora
-            adapter_path = "/mnt/home/sanchit/Qwen2-VL-Finetune/output/chartqa_lora-v0"
+            adapter_path = "qwen-7b-train-chartqa-v4-all-warmup"
+
+            # adapter_path = "/mnt/home/sanchit/Qwen2-VL-Finetune/output/chartqa_lora-v0"
             # adapter_path = "/mnt/home/sanchit/Qwen2-VL-Finetune/output/chartqa_lora-v0-train-all"
             # adapter_path = "/mnt/home/sanchit/Qwen2-VL-Finetune/output/chartqa_lora-v0"
             # adapter_path = "llava-1.6-base-train-charttotext"
@@ -145,12 +155,12 @@ def main():
             # adapter_path = "qwen-7b-train-chartqa-dpo-base-ocr-tabular-rationaleshinge/checkpoint-21018"
             # adapter_path = "qwen-7b-train-chartqa-dpo-base-ocr-tabular-rationales-unicharthinge/checkpoint-28500"
 
-            adapter_path = "qwen-7b-train-chartqa-dpo-no-sft-v1-tabularhinge/checkpoint-14490"
+            # adapter_path = "qwen-7b-train-chartqa-dpo-no-sft-v1-tabularhinge/checkpoint-14490"
 
             # Data gen
             # adapter_path = "qwen-2b-train-chartqa-dpo-base-ocr-tabular-rationaleshinge/checkpoint-21018"
             # Unichart tables
-            # adapter_path = "qwen-2b-train-chartqa-dpo-base-ocr-tabular-rationales-unicharthinge/checkpoint-65000"
+            adapter_path = "qwen-2b-train-chartqa-dpo-base-ocr-tabular-rationales-unicharthinge/checkpoint-65000"
         
             model = PeftModel.from_pretrained(model, adapter_path)
             model = model.merge_and_unload()
@@ -411,10 +421,12 @@ def main():
 
     if args.mode == "grpo":
         # Setup and imports
+        # os.environ["WANDB_CONSOLE"] = "wrap" 
+        # wandb.init(project="chartrl", entity="chartrl")
+
         from trl import (GRPOConfig, GRPOTrainer, get_peft_config)
-        from grpo_utils import format_reward, accuracy_reward
-        os.environ["WANDB_CONSOLE"] = "wrap" 
-        wandb.init(project="chartrl", entity="chartrl")
+        from grpo_utils import format_reward
+
 
         if args.sft_lora:
             adapter_path = "/mnt/home/sanchit/Qwen2-VL-Finetune/output/chartqa_lora-v0"
@@ -422,10 +434,26 @@ def main():
             model = model.merge_and_unload()
             logging.info("Loaded model with SFT adapters from {}".format(adapter_path))
 
-        pref_dataset = dataset.load_pref_data()
-        eval_dataset = dataset.load_pref_data().select(range(512))
 
-        logging.info("Loaded model, pref and eval datasets")
+
+        # GRPO mode of processing prompts, this is a bottleneck
+        train_dataset = train_dataset.map(dataset.grpo_format_data,num_proc=32)
+        eval_dataset = eval_dataset.map(dataset.grpo_format_data,num_proc=32)
+
+        # breakpoint()
+
+        logging.info("Loaded model and datasets")
+
+        training_args = GRPOConfig(
+        output_dir=args.vlm_name+"grpo",  # Directory to save the model
+        bf16=True,
+        per_device_train_batch_size=8,
+        num_train_epochs=3,
+        logging_steps=20,
+        max_prompt_length = None,
+        # eval_strategy="steps",
+        # eval_steps=500,
+        )
 
         grpo_peft_config = LoraConfig(
                     lora_alpha=256,
@@ -438,8 +466,8 @@ def main():
         trainer = GRPOTrainer(
             model=model,
             args=training_args,
-            reward_funcs=[format_reward, accuracy_reward],
-            train_dataset=train_dataset,
+            reward_funcs=[format_reward],
+            train_dataset=eval_dataset,
             eval_dataset=eval_dataset,
             processing_class=processor,
             peft_config=grpo_peft_config,
@@ -448,6 +476,4 @@ def main():
 
         trainer.train()
                     
-
-main()
 

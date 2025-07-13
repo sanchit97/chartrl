@@ -34,7 +34,6 @@ def get_vlm_output(model, processor, image, query, cot = False, icl_samples=None
     messages = []
     for q,im in zip(query,image):
         # breakpoint()
-        # im = resize_up(im)
         if "llava" in model.__class__.__name__.lower():
             messages.append([
                 {
@@ -273,18 +272,6 @@ def format_data(sample):
     ]
 
 
-def resize_up(img: Image.Image) -> Image.Image:
-    img = img.convert("RGB")
-    w, h = img.size
-    p = w * h
-    if MIN_PIXELS <= p <= MAX_PIXELS:
-        return img
-    tgt_p  = max(min(p, MAX_PIXELS), MIN_PIXELS)
-    scale  = (tgt_p / p) ** 0.5
-    new_wh = (int(w * scale), int(h * scale))
-    return img.resize(new_wh, Image.BICUBIC)
-
-
 def select_icl_samples(train_dataset, k=5):
     # Select k random samples from the training dataset for in-context learning
     # Here, we simply select the first k samples for reproducibility
@@ -293,6 +280,9 @@ def select_icl_samples(train_dataset, k=5):
     for i in select_list:
         selected_samples.append(train_dataset[i])
     return selected_samples
+
+
+
 
 
 

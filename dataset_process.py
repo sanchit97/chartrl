@@ -106,6 +106,56 @@ class ChartDataset:
 
             data = dataset[split]
             return data
+        if self.dataset_name == "chartfc":
+            if os.path.exists(cache_dir+"/chartfc_dataset"):
+                dataset = load_from_disk(str(cache_dir+"/chartfc_dataset"))
+            else:
+                root = "./chartfc/ChartFC_chartBERT/data/ChartFC/dataset_files/"
+                with open(root+'train_barplot_seaborn_diverse_charts.json', 'r') as f:
+                    data = json.load(f)
+                data = [
+                    {
+                        "image": f"chartfc/charts_seaborn_v5/{d['image_filename']}",
+                        "label": "Yes" if d["answer"] == 1 else "No",
+                        "question": d["question"],
+                    }
+                    for d in data
+                ]
+                train_ds = Dataset.from_list(data).cast_column("image", Image())
+                with open(root+'valid_barplot_seaborn_diverse_charts.json', 'r') as f:
+                    data = json.load(f)
+                data = [
+                    {
+                        "image": f"chartfc/charts_seaborn_v5/{d['image_filename']}",
+                        "label": "Yes" if d["answer"] == 1 else "No",
+                        "question": d["question"],
+                    }
+                    for d in data
+                ]
+                valid_ds = Dataset.from_list(data).cast_column("image", Image())
+                with open(root+'test_barplot_seaborn_diverse_charts.json', 'r') as f:
+                    data = json.load(f)
+                data = [
+                    {
+                        "image": f"chartfc/charts_seaborn_v5/{d['image_filename']}",
+                        "label": "Yes" if d["answer"] == 1 else "No",
+                        "question": d["question"],
+                    }
+                    for d in data
+                ]
+                test_ds = Dataset.from_list(data).cast_column("image", Image())
+
+
+                chartfc = DatasetDict({
+                                "train":      train_ds,
+                                "validation": valid_ds,
+                                "test":       test_ds,
+                            })
+
+                chartfc.save_to_disk(str(cache_dir+"/chartfc_dataset"))
+
+            data = dataset[split]
+            return data
         
 
         if self.dataset_name == "chartqapro":
@@ -159,6 +209,8 @@ class ChartDataset:
             dataloader = DataLoader(data, batch_size = bsz, collate_fn = self.collate_fn_chartqapro)
         elif self.dataset_name == "figqa":
             dataloader = DataLoader(data, batch_size = bsz, collate_fn = self.collate_fn_figqa)
+        elif self.dataset_name == "chartfc":
+            dataloader = DataLoader(data, batch_size = bsz, collate_fn = self.collate_fn_chartfc)
         return dataloader
 
     def collate_fn_chartqa(self, batch):
@@ -173,6 +225,21 @@ class ChartDataset:
             query_batch.append(batch[idx]['query'])
             label_batch.append(batch[idx]['label'])
             machine_human_batch.append(batch[idx]['human_or_machine'])
+
+        return image_batch, query_batch, label_batch, machine_human_batch
+
+    def collate_fn_chartfc(self, batch):
+        # for quick evals
+        image_batch = []
+        query_batch = []
+        label_batch = []
+        machine_human_batch = []
+        
+        for idx in range(len(batch)):
+            image_batch.append(batch[idx]['image'])
+            query_batch.append(batch[idx]['question']+ ". Answer yes/no.")
+            label_batch.append(batch[idx]['label'])
+            machine_human_batch.append(None)
 
         return image_batch, query_batch, label_batch, machine_human_batch
 
@@ -338,6 +405,7 @@ class ChartDataset:
                 "content": [{"type": "text", "text": example["label"][0]}],
             },]
 
+    # DPO - Load preference data
     def load_pref_data(self):
         # path1 = "./pref-data/base-llava-1.6-sft-hf-dset-hard-negatives"
         # path2 = "./pref-data/llava-1.6-hf-dset-tabular"
@@ -384,6 +452,8 @@ class ChartDataset:
 
         return pref_dataset
 
+
+    # DPO - Format the data for preference learning
     def pref_format(self, example):
         # Prepare the input for the chat template
         prompt = [
@@ -413,6 +483,45 @@ class ChartDataset:
         # max_size = self.processor.image_processor.size["longest_edge"]
         # example["image"].thumbnail((max_size, max_size))
         return {"images": [example["image"]], "prompt": prompt, "chosen": chosen, "rejected": rejected}
+
+
+    def grpo_format_data(self, example):
+        SYSTEM_PROMPT = (
+        "A conversation between User and Assistant. The user asks a question, and the Assistant solves it. The assistant "
+        "first thinks about the reasoning process in the mind and then provides the user with the answer. The reasoning "
+        "process and answer are enclosed within <think> </think> and <answer> </answer> tags, respectively, i.e., "
+        "<think> reasoning process here </think><answer> answer here </answer> "
+        )
+        conversation = [
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {
+                "role": "user",
+                "content": [
+                    {"type": "image"},
+                    {"type": "text", "text": example["query"]},
+                ],
+            },
+        ]
+        prompt = self.processor.apply_chat_template(conversation, add_generation_prompt=True,truncation=False)
+        return {
+            "prompt": prompt,
+            "image": self.resize_up(example["image"]),
+        }
+    
+    def resize_up(self, img):
+        MIN_PIXELS = 640 * 28 * 28            # 1 003 520
+        # MAX_PIXELS = 16384 * 28 * 28           # 12 843 776
+        MAX_PIXELS = 640 * 28 * 28           # 12 843 776
+
+        img = img.convert("RGB")
+        w, h = img.size
+        p = w * h
+        if MIN_PIXELS <= p <= MAX_PIXELS:
+            return img
+        tgt_p  = max(min(p, MAX_PIXELS), MIN_PIXELS)
+        scale  = (tgt_p / p) ** 0.5
+        new_wh = (int(w * scale), int(h * scale))
+        return img.resize(new_wh, Image.BICUBIC)
 
 
 # PlotQA/FigQA
