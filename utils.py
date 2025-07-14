@@ -22,7 +22,7 @@ MAX_PIXELS = 16384 * 28 * 28           # 12 843 776
 
 
 def get_vlm_output(model, processor, image, query, cot = False, icl_samples=None, model_device = None):
-    max_new_tokens = 200 if cot else 100 # To speed up inference when not cot
+    max_new_tokens = 128 if cot else 100 # To speed up inference when not cot
     rationale = None # only used when cot=True
 
     # For ICL
@@ -52,12 +52,15 @@ def get_vlm_output(model, processor, image, query, cot = False, icl_samples=None
             # Your task is to analyze the provided chart image and respond to queries with concise answers, usually a single word, number, or short phrase.
             # The charts include a variety of types (e.g., line charts, bar charts) and contain colors, labels, and text.
             # Focus on delivering accurate, succinct answers based on the visual information. Avoid additional explanation unless absolutely necessary."""
-            system_message = ""
+            system_message = ("A conversation between User and Assistant. The user asks a question, and the Assistant solves it. The assistant \
+                                first thinks about the reasoning process in the mind and then provides the user with the answer. The reasoning \
+                                process and answer are enclosed within <think> </think> and <answer> </answer> tags, respectively, i.e., \
+                                <think> reasoning process here </think><answer> answer here </answer> ")
             messages.append([
-            # {
-            #     "role": "system",
-            #     "content": [{"type": "text", "text": system_message}],
-            # },
+            {
+                "role": "system",
+                "content": [{"type": "text", "text": system_message}],
+            },
             {
                 "role": "user",
                 "content": [
@@ -130,9 +133,10 @@ def get_vlm_output(model, processor, image, query, cot = False, icl_samples=None
             generated_ids_trimmed, skip_special_tokens=True, clean_up_tokenization_spaces=False
         )
 
+        breakpoint()
         if cot: 
-            pred_text = [out.split("### Answer:")[-1].strip() for out in out_text]
-            rationale = [out.split("### Reason:")[-1].split("### Answer")[0].strip("\n") for out in out_text]
+            pred_text = [out.split("<answer>")[-1].strip().split("</answer>")[0].strip() for out in out_text]
+            rationale = [out.split("<think>")[-1].strip().split("</think>")[0].strip("\n") for out in out_text]
             out_text = pred_text
 
 
@@ -197,19 +201,20 @@ def get_vlm_output(model, processor, image, query, cot = False, icl_samples=None
 
 def get_prompt_temp(q, cot=False):
     if cot:
-        prefix = ( "Look at the chart. Think step-by-step based on the question and chart. \n \
-                Generate a reasoning chain first and output it as Reason. \n \
-                In the next line, answer the question with a single word only without units or symbols.\n \
-                Format:  \
-                ### Question: {question} \
-                ### Reason: \
-                step-1 ... \
-                step-2 ... \
-                ....\
-                step-n ... \
-                ### Answer: \n")
+        # prefix = ( "Look at the chart. Think step-by-step based on the question and chart. \n \
+        #         Generate a reasoning chain first and output it as Reason. \n \
+        #         In the next line, answer the question with a single word only without units or symbols.\n \
+        #         Format:  \
+        #         ### Question: {question} \
+        #         ### Reason: \
+        #         step-1 ... \
+        #         step-2 ... \
+        #         ....\
+        #         step-n ... \
+        #         ### Answer: \n")
+        prefix = ("")
         
-        prefix = prefix.format(question=q)
+        # prefix = prefix.format(question=q)
     else:
         # answer en 
         # prefix = "%s Answer the question with a single word. Answer: "%q #used lmms-lab eval

@@ -74,13 +74,14 @@ def load_vlm_model(model_type):
         processor = Qwen2VLProcessor.from_pretrained("Qwen/Qwen2-VL-2B-Instruct", trust_remote_code=True, cache_dir = cache_dir, padding_side="left", use_fast=True)
         # model = AutoModelForImageTextToText.from_pretrained("Qwen/Qwen2-VL-2B-Instruct", device_map={"": 0}, cache_dir = cache_dir, attn_implementation = "flash_attention_2", torch_dtype=torch.bfloat16)
         # model = Qwen2VLForConditionalGeneration.from_pretrained("Qwen/Qwen2-VL-2B-Instruct", torch_dtype="auto", device_map="auto",revision='main', attn_implementation = "flash_attention_2", trust_remote_code=True, cache_dir = cache_dir)
-        model = Qwen2VLForConditionalGeneration.from_pretrained("Qwen/Qwen2-VL-2B-Instruct", torch_dtype="auto",revision='main', device_map=None, trust_remote_code=True, cache_dir = cache_dir)
+        # model = Qwen2VLForConditionalGeneration.from_pretrained("Qwen/Qwen2-VL-2B-Instruct", torch_dtype="auto",revision='main', device_map=None, trust_remote_code=True, cache_dir = cache_dir)
+        model = Qwen2VLForConditionalGeneration.from_pretrained("Qwen/Qwen2-VL-2B-Instruct", torch_dtype="auto",revision='main', device_map=None, trust_remote_code=True, cache_dir = cache_dir, attn_implementation = "flash_attention_2")
 
 
     if model_type == "qwen2-5-3b":
         processor = Qwen2_5_VLProcessor.from_pretrained("Qwen/Qwen2.5-VL-3B-Instruct", padding_side="left", trust_remote_code=True, cache_dir = cache_dir)
         # model = Qwen2_5_VLForConditionalGeneration.from_pretrained("Qwen/Qwen2.5-VL-3B-Instruct", torch_dtype="auto", device_map="auto",revision='main', attn_implementation = "flash_attention_2", trust_remote_code=True, cache_dir = cache_dir)
-        model = Qwen2_5_VLForConditionalGeneration.from_pretrained("Qwen/Qwen2.5-VL-3B-Instruct", torch_dtype="auto", device_map=None,revision='main', trust_remote_code=True, cache_dir = cache_dir)
+        model = Qwen2_5_VLForConditionalGeneration.from_pretrained("Qwen/Qwen2.5-VL-3B-Instruct", torch_dtype="auto", device_map=None, revision='main', trust_remote_code=True, cache_dir = cache_dir)
 
     if model_type == "qwen2-5-7b":
         processor = Qwen2_5_VLProcessor.from_pretrained("Qwen/Qwen2.5-VL-7B-Instruct", padding_side="left", trust_remote_code=True, cache_dir = cache_dir)

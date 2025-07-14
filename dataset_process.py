@@ -486,23 +486,51 @@ class ChartDataset:
 
 
     def grpo_format_data(self, example):
-        SYSTEM_PROMPT = (
-        "A conversation between User and Assistant. The user asks a question, and the Assistant solves it. The assistant "
-        "first thinks about the reasoning process in the mind and then provides the user with the answer. The reasoning "
-        "process and answer are enclosed within <think> </think> and <answer> </answer> tags, respectively, i.e., "
-        "<think> reasoning process here </think><answer> answer here </answer> "
-        )
+        # SYSTEM_PROMPT = (
+        # "A conversation between User and Assistant. The user asks a question, and the Assistant solves it. The assistant \
+        # first thinks about the reasoning process in the mind and then provides the user with the answer. The reasoning \
+        # process and answer are enclosed within <think> </think> and <answer> </answer> tags, respectively, i.e., \
+        # <think> reasoning process here </think><answer> answer here </answer> "
+        # )
+        SYSTEM_PROMPT = """
+        You are a vision-language assistant. You are given a chart image and a query about the chart. 
+        Think step-by-step about how to answer the query based on the chart image and then provide the final answer.
+
+        ### Output format
+        Respond **with exactly two blocks in order and nothing else**:
+        <think>
+        <step-by-step reasoning here - max 200 tokens>
+        </think>
+        <answer>
+        <final answer on a single line>
+        </answer>
+        Do not output anything outside the <think> and <answer> tags.
+        """
+        # SYSTEM_PROMPT = """
+        # You are a vision-language assistant. You are given a chart image and a query about the chart. 
+        # Think step-by-step about how to answer the query based on the chart image and then provide the final answer.
+
+        # ### Output format
+        # Respond **with exactly one block and nothing else**:
+        # <answer>
+        # <final answer on a single line>
+        # </answer>
+        # Do not output anything outside the <answer> tags.
+        # """
         conversation = [
-            {"role": "system", "content": SYSTEM_PROMPT},
+            # {"role": "system", "content": SYSTEM_PROMPT},
             {
                 "role": "user",
                 "content": [
                     {"type": "image"},
-                    {"type": "text", "text": example["query"]},
+                    {"type": "text", "text": SYSTEM_PROMPT+" "+example["query"]},
                 ],
             },
+            # {"role": "assistant", "content": [{"type": "text", "text": "<think>"}]},
         ]
         prompt = self.processor.apply_chat_template(conversation, add_generation_prompt=True,truncation=False)
+        # prompt = self.processor.apply_chat_template(conversation, add_generation_prompt=False, continue_final_message=True,truncation=False)
+
         return {
             "prompt": prompt,
             "image": self.resize_up(example["image"]),
