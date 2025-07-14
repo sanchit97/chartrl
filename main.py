@@ -7,6 +7,8 @@ import random
 import argparse
 
 os.environ["FLASH_ATTENTION_2_ENABLED"] = "1"
+# os.environ["MASTER_ADDR"] = "127.0.0.1"
+# os.environ["MASTER_PORT"]= 29501
 
 import torch
 from transformers import BitsAndBytesConfig
@@ -67,7 +69,8 @@ if __name__ == "__main__":
     if args.mode == "sft" or args.mode == "dpo" or args.mode == "grpo":
         # Set the PEFT 
         if "qwen" in args.vlm_name:
-            target_modules=["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"]
+            # target_modules=["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"]
+            target_modules=["q_proj", "v_proj"]
         elif "intern" in args.vlm_name:
             target_modules=["wqkv", "wo", "w1", "w2", "w3"]
         else:
@@ -421,11 +424,11 @@ if __name__ == "__main__":
 
     if args.mode == "grpo":
         # Setup and imports
-        # os.environ["WANDB_CONSOLE"] = "wrap" 
-        # wandb.init(project="chartrl", entity="chartrl")
+        os.environ["WANDB_CONSOLE"] = "wrap" 
+        wandb.init(project="chartrl", entity="chartrl")
 
         from trl import (GRPOConfig, GRPOTrainer, get_peft_config)
-        from grpo_utils import format_reward
+        from grpo_utils import format_reward, accuracy_reward
 
 
         if args.sft_lora:
@@ -440,25 +443,27 @@ if __name__ == "__main__":
         train_dataset = train_dataset.map(dataset.grpo_format_data,num_proc=32)
         eval_dataset = eval_dataset.map(dataset.grpo_format_data,num_proc=32)
 
-        # breakpoint()
-
         logging.info("Loaded model and datasets")
 
         training_args = GRPOConfig(
-        output_dir=args.vlm_name+"grpo",  # Directory to save the model
+        output_dir=args.vlm_name+"grpo-format+accuracy-only",  # Directory to save the model
         bf16=True,
-        per_device_train_batch_size=8,
-        num_train_epochs=3,
-        logging_steps=20,
+        remove_unused_columns = False,
+        per_device_train_batch_size=4,
+        num_train_epochs=1,
+        logging_steps=50,
         max_prompt_length = None,
-        # eval_strategy="steps",
-        # eval_steps=500,
+        eval_strategy="steps",
+        eval_steps=2000,
+        max_completion_length = 128,
         )
 
         grpo_peft_config = LoraConfig(
-                    lora_alpha=256,
+                    # lora_alpha=256,
+                    lora_alpha=16,
                     lora_dropout=0.05,
-                    r=256,
+                    # r=256,
+                    r=16,
                     bias="none",
                     target_modules = target_modules
                     )
@@ -466,8 +471,8 @@ if __name__ == "__main__":
         trainer = GRPOTrainer(
             model=model,
             args=training_args,
-            reward_funcs=[format_reward],
-            train_dataset=eval_dataset,
+            reward_funcs=[format_reward, accuracy_reward],
+            train_dataset=train_dataset,
             eval_dataset=eval_dataset,
             processing_class=processor,
             peft_config=grpo_peft_config,

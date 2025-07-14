@@ -10,47 +10,42 @@ def format_reward(completions, **kwargs):
         rewards = [1.0 if match else 0.0 for match in matches]
         return rewards
 
-# def accuracy_reward(completions, solution: list[str], **kwargs):
-#     """Reward function that checks if the completion matches the ground truth.
-#     - If both gold and prediction are parseable → use math verification.
-#     - If not parseable → compare as normalized text.
-#     """
-#     rewards = []
+def accuracy_reward(completions, label: list[str], **kwargs):
+    """Reward function that checks if the completion matches the ground truth.
+    - If both gold and prediction are parseable → use math verification.
+    - If not parseable → compare as normalized text.
+    """
+    rewards = []
 
-#     for completion, sol in zip(completions, solution):
-#         try:
-#             gold_parsed = parse(sol, extraction_mode="first_match")
-#         except Exception:
-#             gold_parsed = []
+    # print(completions)
 
-#         if len(gold_parsed) != 0:
-#             # Try parsing predicted answer too
-#             try:
-#                 answer_parsed = parse(
-#                     completion,
-#                     extraction_config=[
-#                         LatexExtractionConfig(
-#                             normalization_config=NormalizationConfig(
-#                                 nits=False,
-#                                 malformed_operators=False,
-#                                 basic_latex=True,
-#                                 boxed="all",
-#                                 units=True,
-#                             ),
-#                             boxed_match_priority=0,
-#                             try_extract_without_anchor=False,
-#                         )
-#                     ],
-#                     extraction_mode="first_match",
-#                 )
-#                 reward = float(verify(gold_parsed, answer_parsed))
-#             except Exception as e:
-#                 print(f"verify failed: {e}, answer: {completion}, gold: {sol}")
-#                 reward = None
-#         else:
-#             # fallback to text match
-#             reward = float(completion.strip().lower() == sol.strip().lower())
+    for completion, sol in zip(completions, label):
+        # breakpoint()
+        # print(completion)
+        # print(label)
+        try:
+            gold_parsed = completion.split("<answer>")[-1].strip().split("</answer>")[0].strip()
+        except Exception:
+            gold_parsed = []
 
-#         rewards.append(reward)
+        if len(gold_parsed) != 0:
+            # Try parsing predicted answer too
+            try:
+                sol = float(sol)
+                # print("GOLD PARSED:", gold_parsed)  
+                gold_parsed = float(gold_parsed)
+                reward = float((abs(gold_parsed - sol))/sol) <= 0.05
+            except Exception as e:
+                print(f"verify failed: {e}, answer: {completion}, gold: {sol}")
+                print(sol, gold_parsed)
+                try:
+                    reward = float(sol.lower() == gold_parsed.lower())
+                except:
+                    reward = 0.0
+        else:
+            # fallback to text match
+           reward = 0.0
 
-#     return rewards
+        rewards.append(reward)
+
+    return rewards

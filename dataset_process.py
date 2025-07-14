@@ -509,9 +509,9 @@ class ChartDataset:
         }
     
     def resize_up(self, img):
-        MIN_PIXELS = 640 * 28 * 28            # 1 003 520
+        MIN_PIXELS = 320 * 28 * 28            # 1 003 520
         # MAX_PIXELS = 16384 * 28 * 28           # 12 843 776
-        MAX_PIXELS = 640 * 28 * 28           # 12 843 776
+        MAX_PIXELS = 320 * 28 * 28           # 12 843 776
 
         img = img.convert("RGB")
         w, h = img.size
@@ -521,7 +521,7 @@ class ChartDataset:
         tgt_p  = max(min(p, MAX_PIXELS), MIN_PIXELS)
         scale  = (tgt_p / p) ** 0.5
         new_wh = (int(w * scale), int(h * scale))
-        return img.resize(new_wh, Image.BICUBIC)
+        return img.resize(new_wh, PILImage.BICUBIC)
 
 
 # PlotQA/FigQA
