@@ -50,6 +50,7 @@ def parse_args():
     parser.add_argument('--vlm-name', type=str, required=True, help='Name of the vision-language model')
     parser.add_argument('--sft-lora', type=bool, required=False, default=False, help='Use LORA adapters for SFT and location')
     parser.add_argument('--dpo-lora', type=bool, required=False, default=False, help='Use LORA adapters for DPO and location')
+    parser.add_argument('--grpo-lora', type=bool, required=False, default=False, help='Use LORA adapters for GRPO and location')
     parser.add_argument('--dataset-name', type=str, required=True, help='Name of the dataset to use')
     parser.add_argument('--dataset-split', type=str, required=False, default = "test", help='Dataset split')
     parser.add_argument('--seed', type=int, default=2025, help='Random seed')
@@ -63,7 +64,7 @@ if __name__ == "__main__":
     args = parse_args()
 
     # TODO: Load the model and processor for chart specific models (they dont work with batched inputs)
-    model, processor = load_vlm_model(args.vlm_name)
+    model, processor = load_vlm_model(args.vlm_name, args.mode)
     logging.info("Loaded model and processor")
 
     if args.mode == "sft" or args.mode == "dpo" or args.mode == "grpo":
@@ -125,7 +126,6 @@ if __name__ == "__main__":
         if args.icl:
             train_dataset = dataset.load(split = "train")
 
-
     
     # Load the model and processor
     if args.mode == "eval":
@@ -141,6 +141,7 @@ if __name__ == "__main__":
             model = PeftModel.from_pretrained(model, adapter_path)
             model = model.merge_and_unload()
             logging.info("Loaded model with SFT adapters from {}".format(adapter_path))
+
 
         # DPO adapter
         if args.dpo_lora:
@@ -169,6 +170,18 @@ if __name__ == "__main__":
             model = model.merge_and_unload()
 
             logging.info("Loaded model with DPO adapters from {}".format(adapter_path))
+        
+        if args.grpo_lora:
+            # adapter_path = "qwen2-5-3bgrpo-format-only/checkpoint-7500"
+            # adapter_path = "qwen2-5-3bgrpo-format+accuracy-only/checkpoint-7500"
+            # adapter_path = "grpo-start-ckpts/qwen2-5-3bgrpo-answer-only/checkpoint-23000"
+            # adapter_path = "grpo-start-ckpts/grpo-full-model-6gen/checkpoint-500"
+            # model = PeftModel.from_pretrained(model, adapter_path)
+            # model = model.merge_and_unload()
+            from transformers import  Qwen2_5_VLForConditionalGeneration, Qwen2_5_VLProcessor
+            model = Qwen2_5_VLForConditionalGeneration.from_pretrained("/mnt/home/sanchit/rl-chart/grpo-start-ckpts/qwen2-5-7bgrpo-full-model/checkpoint-500/", device_map="auto", local_files_only=True)
+            model.eval()
+            # logging.info("Loaded model with GRPO adapters from {}".format(adapter_path))
 
 
         em_correct, ra_correct, tot_bleuscore, total = 0, 0, 0, 0
@@ -183,7 +196,7 @@ if __name__ == "__main__":
         logging.info("Starting evaluation on {} samples".format(len(test_dataset)))
         logging.info("Using CoT: {}".format(args.cot))
 
-        loader = dataset.create_loader(test_dataset, bsz=16)
+        loader = dataset.create_loader(test_dataset, bsz=4)
 
         if args.icl:
             path = "./icl-examples/"+args.dataset_name+"-icl_samples.pkl"
@@ -205,9 +218,10 @@ if __name__ == "__main__":
                 else:
                     logging.info("Using automatic model device setting")
                     pred, rationale = get_vlm_output(model, processor, batch[0], batch[1], args.cot)
+            print(batch)
             print(pred)
             print(batch[2])
-            print(rationale)
+            # print(rationale)
             # breakpoint()
             # TODO: Understand why this takes so long (and optimize)
             bleu_score = 0
@@ -424,11 +438,11 @@ if __name__ == "__main__":
 
     if args.mode == "grpo":
         # Setup and imports
-        os.environ["WANDB_CONSOLE"] = "wrap" 
-        wandb.init(project="chartrl", entity="chartrl")
+        # os.environ["WANDB_CONSOLE"] = "wrap" 
+        # wandb.init(project="chartrl", entity="chartrl")
 
         from trl import (GRPOConfig, GRPOTrainer, get_peft_config)
-        from grpo_utils import format_reward, accuracy_reward
+        from grpo_utils import format_reward, accuracy_reward, length_think_reward
 
 
         if args.sft_lora:
@@ -440,42 +454,46 @@ if __name__ == "__main__":
 
 
         # GRPO mode of processing prompts, this is a bottleneck
-        train_dataset = train_dataset.map(dataset.grpo_format_data,num_proc=32)
-        eval_dataset = eval_dataset.map(dataset.grpo_format_data,num_proc=32)
+        train_dataset = train_dataset.map(dataset.grpo_format_data,num_proc=32).shuffle(seed=seed).select(range(5000))
+        eval_dataset = eval_dataset.map(dataset.grpo_format_data,num_proc=32).select(range(200))
 
         logging.info("Loaded model and datasets")
 
         training_args = GRPOConfig(
-        output_dir=args.vlm_name+"grpo-format+accuracy-only",  # Directory to save the model
+        # output_dir=args.vlm_name+"grpo-answer-think-preappend",  # Directory to save the model
+        # output_dir="random-testing",  # Directory to save the model
+        # output_dir=args.vlm_name+"grpo-no-thinking-format-accuracy",  # Directory to save the model
+        output_dir = "grpo-start-ckpts/"+args.vlm_name+"grpo-f-a-l-full-model-testing",  # Directory to save the model
         bf16=True,
         remove_unused_columns = False,
         per_device_train_batch_size=4,
-        num_train_epochs=1,
+        num_train_epochs=2,
         logging_steps=50,
         max_prompt_length = None,
         eval_strategy="steps",
         eval_steps=2000,
-        max_completion_length = 128,
+        max_completion_length = 1024,
+        num_generations = 8
         )
 
-        grpo_peft_config = LoraConfig(
-                    # lora_alpha=256,
-                    lora_alpha=16,
-                    lora_dropout=0.05,
-                    # r=256,
-                    r=16,
-                    bias="none",
-                    target_modules = target_modules
-                    )
+        # grpo_peft_config = LoraConfig(
+        #             lora_alpha=1024,
+        #             # lora_alpha=16,
+        #             lora_dropout=0.05,
+        #             r=1024,
+        #             # r=16,
+        #             bias="none",
+        #             target_modules = target_modules
+        #             )
 
         trainer = GRPOTrainer(
             model=model,
             args=training_args,
-            reward_funcs=[format_reward, accuracy_reward],
+            reward_funcs=[format_reward, accuracy_reward, length_think_reward],
             train_dataset=train_dataset,
             eval_dataset=eval_dataset,
             processing_class=processor,
-            peft_config=grpo_peft_config,
+            # peft_config=grpo_peft_config,
         )
         
 
