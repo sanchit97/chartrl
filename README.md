@@ -13,8 +13,8 @@ Huge thanks to the team at Morgan Stanley for their support.
 ## Main Benchmark Results
 
 | Model   (2-3 billion range) | Strategy         | ChartQA (RA)  | Aug (RA)     | Human (RA)   |   Notes
-|-----------------------------:|----------------:|-------------:|--------------:|-------------:------------:
-| Qwen-2.5VL-Instruct          | Direct          | 82.84        |   94.48      | 71.2         | (No rationales)
+|-----------------------------|----------------|-------------|--------------|-------------------------
+| Qwen-2.5VL-Instruct         | Direct          | 82.84        |   94.48      | 71.2         | (No rationales)
 | Qwen-2.5VL-Instruct - SFT   | Direct           |              |               |             | (No rationales)
 | Qwen-2.5VL-Instruct         | CoT              | 73.12        |   93.44       | 52.8        | (Very bad rationales)
 | Qwen-2.5VL-Instruct - SFT   | CoT              |              |               |             | (No rationales)
