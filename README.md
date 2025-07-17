@@ -1,15 +1,31 @@
 # ChartRL: Improving Chart understanding in VLMs 
 
-Repo for RL post-training on Chart data
+Repo for RL post-training on Chart data. We are happy to present a small 3 billion chart understanding model which outputs answers AND rationales with no fine-tuning.
 
-## Main Inference Results
+The design hinges on training VLMs using GRPO with verifiable rewards.
+The training data is sampled from train sets of - ChartQA, PlotQA, FigQA and ChartFC.
 
-| Model                     | Strategy  | ChartQA (RA) | PlotQA (RA)  | FigQA (RA)
-|---------------------------|-----------|-------------:|-------------:|------------:
-| Qwen-2VL-Instruct         | Base      | 75.00        | 83.36        |
-| Qwen-2VL-Instruct         | DPO-Direct| 75.48 (+0.48)| 83.50 (+0.14)|
 
-## Loss ablations for DPO
+Huge thanks to the team at Morgan Stanley for their support.
+
+
+
+## Main Benchmark Results
+
+| Model   (2-3 billion range) | Strategy        | ChartQA (RA) | Aug (RA)     | Human (RA) | Notes
+|-----------------------------|----------------:|-------------:|-------------:|------------:------------:
+| Qwen-2.5VL-Instruct         | Direct          | 82.84        |   94.48      | 71.2       : (No rationales)
+| Qwen-2.5VL-Instruct - SFT   | Direct          |              |              |            : (No rationales)
+| Qwen-2.5VL-Instruct         | CoT             | 73.12        |   93.44      | 52.8       : (Very bad rationales)
+| Qwen-2.5VL-Instruct - SFT   | CoT             |              |              |            : (No rationales)
+| Qwen-2.5VL-Instruct         | GRPO - naive    | 77.0         |   89.44      | 64.56      : (Good rationales)
+| Qwen-2.5VL-Instruct         | Ours            | *86.8*       |   94.4       | 79.2       : (Solid rationales)
+
+
+Our approach boosts performance on human annotated splits of ChartQA 
+
+
+## Loss ablations for DPO (old work not relevant now)
 
 | Model          | Loss       | RA    |
 |----------------|------------|-------|
