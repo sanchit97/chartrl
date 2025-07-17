@@ -129,6 +129,8 @@ if __name__ == "__main__":
     
     # Load the model and processor
     if args.mode == "eval":
+        blocks = 2 if args.cot else 1 # 1 is Direct Prompting, 2 is COT, 3 is GRPO COT 
+        logging.info("Blocks:", blocks)
         # SFT adapter
         if args.sft_lora:
             # adapter_path = args.sft_lora
@@ -141,7 +143,6 @@ if __name__ == "__main__":
             model = PeftModel.from_pretrained(model, adapter_path)
             model = model.merge_and_unload()
             logging.info("Loaded model with SFT adapters from {}".format(adapter_path))
-
 
         # DPO adapter
         if args.dpo_lora:
@@ -181,6 +182,7 @@ if __name__ == "__main__":
             from transformers import  Qwen2_5_VLForConditionalGeneration, Qwen2_5_VLProcessor
             model = Qwen2_5_VLForConditionalGeneration.from_pretrained("/mnt/home/sanchit/rl-chart/grpo-start-ckpts/qwen2-5-7bgrpo-f-a-l-full-model-cot-v3-all-data/checkpoint-2500/", device_map="auto", local_files_only=True)
             model.eval()
+            blocks = 3
             # logging.info("Loaded model with GRPO adapters from {}".format(adapter_path))
 
 
@@ -196,7 +198,7 @@ if __name__ == "__main__":
         logging.info("Starting evaluation on {} samples".format(len(test_dataset)))
         logging.info("Using CoT: {}".format(args.cot))
 
-        loader = dataset.create_loader(test_dataset, bsz=8)
+        loader = dataset.create_loader(test_dataset, bsz=32)
 
         if args.icl:
             path = "./icl-examples/"+args.dataset_name+"-icl_samples.pkl"
@@ -210,14 +212,14 @@ if __name__ == "__main__":
 
         for batch in tqdm.tqdm(loader):
             if args.icl:
-                pred, rationale = get_vlm_output(model, processor, batch[0], batch[1], args.cot, icl_samples)
+                pred, rationale = get_vlm_output(model, processor, batch[0], batch[1], args.cot, icl_samples, blocks)
             else:
                 if args.vlm_name in ["qwen-2b"]:
                     logging.info("Using explicit model device setting")
-                    pred, rationale = get_vlm_output(model, processor, batch[0], batch[1], args.cot, model_device="cuda")
+                    pred, rationale = get_vlm_output(model, processor, batch[0], batch[1], args.cot, model_device="cuda", blocks = blocks)
                 else:
                     logging.info("Using automatic model device setting")
-                    pred, rationale = get_vlm_output(model, processor, batch[0], batch[1], args.cot)
+                    pred, rationale = get_vlm_output(model, processor, batch[0], batch[1], args.cot, blocks = blocks)
             # print(batch)
             print(pred)
             print(batch[2])
@@ -254,11 +256,6 @@ if __name__ == "__main__":
 
 
             ra_correct += ra[0]
-            
-               
-            #ROUGE-L
-            #F1
-            #BLEU
 
             total += len(batch[0])
 

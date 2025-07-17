@@ -21,6 +21,8 @@ from qwen_vl_utils import process_vision_info
 
 from models import load_vlm_model
 
+from prompts import SYSTEM_PROMPT_TEMPLATES
+
 # from utils import resize
 
 import logging
@@ -106,6 +108,7 @@ class ChartDataset:
 
             data = dataset[split]
             return data
+        
         if self.dataset_name == "chartfc":
             if os.path.exists(cache_dir+"/chartfc_dataset"):
                 dataset = load_from_disk(str(cache_dir+"/chartfc_dataset"))
@@ -268,7 +271,7 @@ class ChartDataset:
         for idx in range(len(batch)):
             image_batch.append(batch[idx]['image'])
             query_batch.append(batch[idx]['query'])
-            label_batch.append(batch[idx]['label'])
+            label_batch.append(batch[idx]['label'].strip("."))
 
         return image_batch, query_batch, label_batch
 
@@ -485,45 +488,16 @@ class ChartDataset:
         return {"images": [example["image"]], "prompt": prompt, "chosen": chosen, "rejected": rejected}
 
 
-    def grpo_format_data(self, example):
-        # SYSTEM_PROMPT = (
-        # "A conversation between User and Assistant. The user asks a question, and the Assistant solves it. The assistant \
-        # first thinks about the reasoning process in the mind and then provides the user with the answer. The reasoning \
-        # process and answer are enclosed within <think> </think> and <answer> </answer> tags, respectively, i.e., \
-        # <think> reasoning process here </think><answer> answer here </answer> "
-        # )
-        SYSTEM_PROMPT = """
-        You are a vision-language assistant. You are given a chart image and a query about the chart. 
-        Think step-by-step about how to answer the query based on the chart image and then provide the final answer.
-
-        ### Output format
-        Respond **with exactly two blocks in order and nothing else**:
-        <think>
-        <step-by-step reasoning here - max 200 tokens>
-        </think>
-        <answer>
-        <final answer on a single line>
-        </answer>
-        Do not output anything outside the <think> and <answer> tags.
-        """
-        # SYSTEM_PROMPT = """
-        # You are a vision-language assistant. You are given a chart image and a query about the chart. 
-        # Think step-by-step about how to answer the query based on the chart image and then provide the final answer.
-
-        # ### Output format
-        # Respond **with exactly one block and nothing else**:
-        # <answer>
-        # <final answer on a single line>
-        # </answer>
-        # Do not output anything outside the <answer> tags.
-        # """
+    def grpo_format_data(self, example, blocks=3):
+        SYSTEM_PROMPT = SYSTEM_PROMPT_TEMPLATES[blocks]
+        
         conversation = [
-            # {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "system", "content": SYSTEM_PROMPT},
             {
                 "role": "user",
                 "content": [
                     {"type": "image"},
-                    {"type": "text", "text": SYSTEM_PROMPT+" "+example["query"]},
+                    {"type": "text", "text": example["query"]},
                 ],
             },
             # {"role": "assistant", "content": [{"type": "text", "text": "<think>"}]},
@@ -534,12 +508,13 @@ class ChartDataset:
         return {
             "prompt": prompt,
             "image": self.resize_up(example["image"]),
+            # "image": example["image"],
         }
     
     def resize_up(self, img):
         MIN_PIXELS = 320 * 28 * 28            # 1 003 520
         # MAX_PIXELS = 16384 * 28 * 28           # 12 843 776
-        MAX_PIXELS = 320 * 28 * 28           # 12 843 776
+        MAX_PIXELS = 320 * 28 * 28           # 12 843 776 (about 500x500)
 
         img = img.convert("RGB")
         w, h = img.size
