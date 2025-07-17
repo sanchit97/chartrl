@@ -12,14 +12,15 @@ Huge thanks to the team at Morgan Stanley for their support.
 
 ## Main Benchmark Results
 
-| Model   (2-3 billion range) | Strategy         | ChartQA (RA)  | Aug (RA)     | Human (RA)   |   Notes
-|-----------------------------|----------------|-------------|--------------|-------------------------
-| Qwen-2.5VL-Instruct         | Direct          | 82.84        |   94.48      | 71.2         | (No rationales)
-| Qwen-2.5VL-Instruct - SFT   | Direct           |              |               |             | (No rationales)
-| Qwen-2.5VL-Instruct         | CoT              | 73.12        |   93.44       | 52.8        | (Very bad rationales)
-| Qwen-2.5VL-Instruct - SFT   | CoT              |              |               |             | (No rationales)
-| Qwen-2.5VL-Instruct         | GRPO - naive     | 77.0         |   89.44       | 64.56       | (Good rationales)
-| Qwen-2.5VL-Instruct         | Ours             | **86.8**     |   94.4      | 79.2          | (**Solid rationales**)
+| Model (≈ 2‑3 B params)     | Strategy        | ChartQA&nbsp;(RA) | Aug&nbsp;(RA) | Human&nbsp;(RA) | Notes                     |
+|----------------------------|-----------------|------------------|---------------|-----------------|---------------------------|
+| Qwen‑2.5 VL‑Instruct       | Direct          | 82.84            | 94.48         | 71.20           | No rationales             |
+| Qwen‑2.5 VL‑Instruct – SFT | Direct          | —                | —             | —               | No rationales             |
+| Qwen‑2.5 VL‑Instruct       | CoT             | 73.12            | 93.44         | 52.80           | Very bad rationales       |
+| Qwen‑2.5 VL‑Instruct – SFT | CoT             | —                | —             | —               | No rationales             |
+| Qwen‑2.5 VL‑Instruct       | GRPO (naïve)    | 77.00            | 89.44         | 64.56           | Good rationales           |
+| **Qwen‑2.5 VL‑Instruct**   | **Ours**        | **86.80**        | **94.40**     | **79.20**       | **Solid rationales**      |
+
 
 
 Our approach boosts performance on human annotated splits of ChartQA 
