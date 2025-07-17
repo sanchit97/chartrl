@@ -179,7 +179,7 @@ if __name__ == "__main__":
             # model = PeftModel.from_pretrained(model, adapter_path)
             # model = model.merge_and_unload()
             from transformers import  Qwen2_5_VLForConditionalGeneration, Qwen2_5_VLProcessor
-            model = Qwen2_5_VLForConditionalGeneration.from_pretrained("/mnt/home/sanchit/rl-chart/grpo-start-ckpts/qwen2-5-7bgrpo-full-model/checkpoint-500/", device_map="auto", local_files_only=True)
+            model = Qwen2_5_VLForConditionalGeneration.from_pretrained("/mnt/home/sanchit/rl-chart/grpo-start-ckpts/qwen2-5-7bgrpo-f-a-l-full-model-cot-v3-all-data/checkpoint-2500/", device_map="auto", local_files_only=True)
             model.eval()
             # logging.info("Loaded model with GRPO adapters from {}".format(adapter_path))
 
@@ -196,7 +196,7 @@ if __name__ == "__main__":
         logging.info("Starting evaluation on {} samples".format(len(test_dataset)))
         logging.info("Using CoT: {}".format(args.cot))
 
-        loader = dataset.create_loader(test_dataset, bsz=4)
+        loader = dataset.create_loader(test_dataset, bsz=8)
 
         if args.icl:
             path = "./icl-examples/"+args.dataset_name+"-icl_samples.pkl"
@@ -218,7 +218,7 @@ if __name__ == "__main__":
                 else:
                     logging.info("Using automatic model device setting")
                     pred, rationale = get_vlm_output(model, processor, batch[0], batch[1], args.cot)
-            print(batch)
+            # print(batch)
             print(pred)
             print(batch[2])
             # print(rationale)
@@ -438,23 +438,51 @@ if __name__ == "__main__":
 
     if args.mode == "grpo":
         # Setup and imports
-        # os.environ["WANDB_CONSOLE"] = "wrap" 
-        # wandb.init(project="chartrl", entity="chartrl")
+        os.environ["WANDB_CONSOLE"] = "wrap" 
+        wandb.init(project="chartrl", entity="chartrl")
 
         from trl import (GRPOConfig, GRPOTrainer, get_peft_config)
-        from grpo_utils import format_reward, accuracy_reward, length_think_reward
+        from grpo_utils import format_reward, accuracy_reward, length_think_reward, num_token_reward
 
 
-        if args.sft_lora:
-            adapter_path = "/mnt/home/sanchit/Qwen2-VL-Finetune/output/chartqa_lora-v0"
-            model = PeftModel.from_pretrained(model, adapter_path)
-            model = model.merge_and_unload()
-            logging.info("Loaded model with SFT adapters from {}".format(adapter_path))
+        # if args.sft_lora:
+        #     adapter_path = "/mnt/home/sanchit/Qwen2-VL-Finetune/output/chartqa_lora-v0"
+        #     model = PeftModel.from_pretrained(model, adapter_path)
+        #     model = model.merge_and_unload()
+        #     logging.info("Loaded model with SFT adapters from {}".format(adapter_path))
 
 
+        ### Messy - fix
+        all_datasets = []
+        dataset = ChartDataset("chartqa-src", processor=processor)
+        train_dataset = dataset.load_chart_dataset(split = "train")
+        all_datasets.append(train_dataset)
+        dataset = ChartDataset("figqa", processor=processor)
+        train_dataset = dataset.load_chart_dataset(split = "train")
+        all_datasets.append(train_dataset)
+        dataset = PlotQADataset("plotqa", processor=processor)
+        train_dataset = dataset.load_plotqa_dataset(split = "train")
+        all_datasets.append(train_dataset)
+        dataset = ChartDataset("chartfc", processor=processor)
+        train_dataset = dataset.load_chart_dataset(split = "train")
+        all_datasets.append(train_dataset)
 
-        # GRPO mode of processing prompts, this is a bottleneck
-        train_dataset = train_dataset.map(dataset.grpo_format_data,num_proc=32).shuffle(seed=seed).select(range(5000))
+        all_datasets[0] = all_datasets[0].remove_columns('human_or_machine')
+        all_datasets[2] = all_datasets[2].remove_columns('image_index')
+        all_datasets[2] = all_datasets[2].remove_columns('qid')
+        all_datasets[2] = all_datasets[2].remove_columns('answer_id')
+        all_datasets[2] = all_datasets[2].remove_columns('type')
+        all_datasets[2] = all_datasets[2].remove_columns('question_id')
+        all_datasets[2] = all_datasets[2].rename_column('question_string', 'query')
+        all_datasets[3] = all_datasets[3].rename_column('question','query')
+
+        all_datasets = [dst.shuffle(seed=seed).select(range(3000)) for dst in all_datasets]
+        from datasets import concatenate_datasets
+        train_dataset = concatenate_datasets(all_datasets)
+
+        dataset = ChartDataset("chartqa-src", processor=processor)
+        train_dataset = train_dataset.map(dataset.grpo_format_data,num_proc=32)#.shuffle(seed=seed)#.select(range(5000))
+        # train_dataset = train_dataset.map(dataset.grpo_format_data,num_proc=32).shuffle(seed=seed).select(range(1680,5000))
         eval_dataset = eval_dataset.map(dataset.grpo_format_data,num_proc=32).select(range(200))
 
         logging.info("Loaded model and datasets")
@@ -463,16 +491,16 @@ if __name__ == "__main__":
         # output_dir=args.vlm_name+"grpo-answer-think-preappend",  # Directory to save the model
         # output_dir="random-testing",  # Directory to save the model
         # output_dir=args.vlm_name+"grpo-no-thinking-format-accuracy",  # Directory to save the model
-        output_dir = "grpo-start-ckpts/"+args.vlm_name+"grpo-f-a-l-full-model-testing",  # Directory to save the model
+        output_dir = "grpo-start-ckpts/"+args.vlm_name+"grpo-f-a-l-full-model-cot-v3-all-data",  # Directory to save the model
         bf16=True,
         remove_unused_columns = False,
-        per_device_train_batch_size=4,
+        per_device_train_batch_size=2,
         num_train_epochs=2,
         logging_steps=50,
-        max_prompt_length = None,
+        max_prompt_length = 6144,
         eval_strategy="steps",
-        eval_steps=2000,
-        max_completion_length = 1024,
+        eval_steps=500,
+        max_completion_length = 512,
         num_generations = 8
         )
 
@@ -489,7 +517,7 @@ if __name__ == "__main__":
         trainer = GRPOTrainer(
             model=model,
             args=training_args,
-            reward_funcs=[format_reward, accuracy_reward, length_think_reward],
+            reward_funcs=[format_reward, accuracy_reward, length_think_reward, num_token_reward],
             train_dataset=train_dataset,
             eval_dataset=eval_dataset,
             processing_class=processor,

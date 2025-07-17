@@ -85,6 +85,21 @@ def load_vlm_model(model_type, mode = "eval"):
         else:
             model = Qwen2_5_VLForConditionalGeneration.from_pretrained("Qwen/Qwen2.5-VL-3B-Instruct", torch_dtype="auto", device_map="auto",revision='main', attn_implementation = "flash_attention_2", trust_remote_code=True, cache_dir = cache_dir)
 
+    if model_type == "qwen2-2b-base":
+        processor = Qwen2VLProcessor.from_pretrained("Qwen/Qwen2-VL-2B", padding_side="left", trust_remote_code=True, cache_dir = cache_dir)
+        if mode == "grpo":
+            model = Qwen2VLForConditionalGeneration.from_pretrained("Qwen/Qwen2-VL-2B", torch_dtype="auto", device_map=None, revision='main', trust_remote_code=True, cache_dir = cache_dir)
+        else:
+            model = Qwen2VLForConditionalGeneration.from_pretrained("Qwen/Qwen2-VL-2B", torch_dtype="auto", device_map="auto",revision='main', attn_implementation = "flash_attention_2", trust_remote_code=True, cache_dir = cache_dir)
+
+    # if model_type == "qwen2-2b-base":
+    #     processor = Qwen2_5_VLProcessor.from_pretrained("Qwen/Qwen2-VL-2B", padding_side="left", trust_remote_code=True, cache_dir = cache_dir)
+    #     if mode == "grpo":
+    #         model = Qwen2_5_VLForConditionalGeneration.from_pretrained("Qwen/Qwen2-VL-2B", torch_dtype="auto", device_map=None, revision='main', trust_remote_code=True, cache_dir = cache_dir)
+    #     else:
+    #         model = Qwen2_5_VLForConditionalGeneration.from_pretrained("Qwen/Qwen2-VL-2B", torch_dtype="auto", device_map="auto",revision='main', attn_implementation = "flash_attention_2", trust_remote_code=True, cache_dir = cache_dir)
+
+
     if model_type == "qwen2-5-7b":
         processor = Qwen2_5_VLProcessor.from_pretrained("Qwen/Qwen2.5-VL-7B-Instruct", padding_side="left", trust_remote_code=True, cache_dir = cache_dir)
         if mode == "grpo":

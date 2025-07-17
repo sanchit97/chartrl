@@ -22,7 +22,7 @@ MAX_PIXELS = 16384 * 28 * 28           # 12 843 776
 
 
 def get_vlm_output(model, processor, image, query, cot = False, icl_samples=None, model_device = None):
-    max_new_tokens = 128 if cot else 100 # To speed up inference when not cot
+    max_new_tokens = 256 if cot else 100 # To speed up inference when not cot
     rationale = None # only used when cot=True
 
     # For ICL
@@ -52,22 +52,79 @@ def get_vlm_output(model, processor, image, query, cot = False, icl_samples=None
             # Your task is to analyze the provided chart image and respond to queries with concise answers, usually a single word, number, or short phrase.
             # The charts include a variety of types (e.g., line charts, bar charts) and contain colors, labels, and text.
             # Focus on delivering accurate, succinct answers based on the visual information. Avoid additional explanation unless absolutely necessary."""
-            system_message = ("A conversation between User and Assistant. The user asks a question, and the Assistant solves it. The assistant \
-                                first thinks about the reasoning process in the mind and then provides the user with the answer. The reasoning \
-                                process and answer are enclosed within <think> </think> and <answer> </answer> tags, respectively, i.e., \
-                                <think> reasoning process here </think><answer> answer here </answer> ")
+            # system_message = ("A conversation between User and Assistant. The user asks a question, and the Assistant solves it. The assistant \
+            #                     first thinks about the reasoning process in the mind and then provides the user with the answer. The reasoning \
+            #                     process and answer are enclosed within <think> </think> and <answer> </answer> tags, respectively, i.e., \
+            #                     <think> reasoning process here </think><answer> answer here </answer> ")
+            
+            if cot:
+                SYSTEM_PROMPT = """
+                You are a vision-language assistant. You are given a chart image and a query about the chart. 
+                Think step-by-step about how to answer the query based on the chart image and then provide the final answer.
+
+                ### Output format
+                Respond **with exactly two blocks in order and nothing else**:
+                <think>
+                <step-by-step reasoning here - max 200 tokens>
+                </think>
+                <answer>
+                <final answer on a single line>
+                </answer>
+                Do not output anything outside the <think> and <answer> tags.
+                """
+            else:
+                # SYSTEM_PROMPT = """
+                # You are a vision-language assistant. You are given a chart image and a query about the chart. 
+                # Think step-by-step about how to answer the query based on the chart image and then provide the final answer.
+
+                # ### Output format
+                # Respond **with exactly one block and nothing else**:
+                # <answer>
+                # <final answer on a single line>
+                # </answer>
+                # Do not output anything outside the <answer> tags.
+                # """
+
+                SYSTEM_PROMPT = """
+                You are a vision-language assistant. You are given a chart image and a query about the chart.
+                Please try to answer the question with short words or phrases if possible.
+                """
+            
+            # messages.append([
+            # {
+            #     "role": "system",
+            #     "content": [{"type": "text", "text": SYSTEM_PROMPT}],
+            # },
+            # {
+            #     "role": "user",
+            #     "content": [
+            #         {"type": "image", "image": im},
+            #         {"type": "text", "text": q},
+            #     ],
+            # },
+            # {
+            #     "role": "assistant", 
+            #     "content": [{"type": "text", "text": "<think> "}]
+            # },
+            # ])
+
             messages.append([
             {
                 "role": "system",
-                "content": [{"type": "text", "text": system_message}],
+                "content": [{"type": "text", "text": SYSTEM_PROMPT}],
             },
             {
                 "role": "user",
                 "content": [
-                    {"type": "image", "image": im},
+                    {"type": "image", "image": resize_fit(im)},
                     {"type": "text", "text": q},
                 ],
-            }])
+            },
+            # {
+            #     "role": "assistant", 
+            #     "content": [{"type": "text", "text": "<think> "}]
+            # },
+            ])
 
         elif "internvl" in model.__class__.__name__.lower():
             messages.append("<image>\n " + q)
@@ -108,6 +165,8 @@ def get_vlm_output(model, processor, image, query, cot = False, icl_samples=None
     elif "qwen" in model.__class__.__name__.lower():
         # breakpoint()
         text = processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+        # print(text)
+        # text = processor.apply_chat_template(messages, add_generation_prompt=False, continue_final_message=True, truncation=False)
         image_inputs, video_inputs = process_vision_info(messages)
         inputs = processor(
             text=text,
@@ -133,7 +192,8 @@ def get_vlm_output(model, processor, image, query, cot = False, icl_samples=None
             generated_ids_trimmed, skip_special_tokens=True, clean_up_tokenization_spaces=False
         )
 
-        breakpoint()
+        # breakpoint()
+        print("raw:", out_text)
         if cot: 
             pred_text = [out.split("<answer>")[-1].strip().split("</answer>")[0].strip() for out in out_text]
             rationale = [out.split("<think>")[-1].strip().split("</think>")[0].strip("\n") for out in out_text]
@@ -212,15 +272,16 @@ def get_prompt_temp(q, cot=False):
         #         ....\
         #         step-n ... \
         #         ### Answer: \n")
-        prefix = ("")
+        prefix = ("{question}")
         
-        # prefix = prefix.format(question=q)
+        prefix = prefix.format(question=q)
     else:
         # answer en 
         # prefix = "%s Answer the question with a single word. Answer: "%q #used lmms-lab eval
 
         # For weird PaliGemma models (they require an instruction format of form "answer en")
-        prefix = "{question}\n Please try to answer the question with short words or phrases if possible.".format(question=q)
+        # prefix = "{question}\n Please try to answer the question with short words or phrases if possible.".format(question=q)
+        prefix = "{question}".format(question=q)
 
         # prefix = "Look at the chart. %s Answer with one word only no other text."%q
         # prefix = "Look at the chart. %s. Answer in 100 words or fewer."%q
@@ -378,3 +439,17 @@ def select_icl_samples(train_dataset, k=5):
 
 
 
+def resize_fit(img):
+        MIN_PIXELS = 480 * 28 * 28            # 1 003 520
+        # MAX_PIXELS = 16384 * 28 * 28           # 12 843 776
+        MAX_PIXELS = 480 * 28 * 28           # 12 843 776
+
+        img = img.convert("RGB")
+        w, h = img.size
+        p = w * h
+        if MIN_PIXELS <= p <= MAX_PIXELS:
+            return img
+        tgt_p  = max(min(p, MAX_PIXELS), MIN_PIXELS)
+        scale  = (tgt_p / p) ** 0.5
+        new_wh = (int(w * scale), int(h * scale))
+        return img.resize(new_wh, Image.BICUBIC)
