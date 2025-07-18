@@ -11,6 +11,7 @@ os.environ["FLASH_ATTENTION_2_ENABLED"] = "1"
 # os.environ["MASTER_PORT"]= 29501
 
 import torch
+import numpy as np
 from transformers import BitsAndBytesConfig
 from transformers import AutoModel, AutoProcessor, AutoTokenizer
 from peft import LoraConfig, get_peft_model, PeftModel
@@ -33,8 +34,6 @@ import logging, os
 
 
 seed = 2025
-random.seed(seed)
-# torch.seed_all(2025)
 
 
 logging.basicConfig(
@@ -42,6 +41,10 @@ logging.basicConfig(
     format="%(asctime)s | %(levelname)s | %(name)s | %(message)s"
 )
 
+cache_dir = '/mnt/data/sanchit/hf'
+os.environ['HF_HUB_CACHE'] = '/mnt/data/sanchit/hf'
+os.environ['TRANSFORMERS_CACHE']= '/mnt/data/sanchit/hf'
+os.environ['HF_HOME'] = '/mnt/data/sanchit/hf'
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Argument parser for VLM evaluation pipeline")
@@ -58,6 +61,27 @@ def parse_args():
     parser.add_argument('--icl', type=bool, default=False, help='To use ICL examples for inference or not')
 
     return parser.parse_args()
+
+def set_all_seeds(seed: int = 2025) -> None:
+    """Sets the random seed for PyTorch, NumPy, and Python's random module."""
+    np.random.seed(seed)
+    random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed(seed) # For current GPU
+        torch.cuda.manual_seed_all(seed) # For all GPUs
+    
+    # When running on the CuDNN backend, two further options must be set for full determinism.
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+    
+    # Set a fixed value for the hash seed to ensure consistent hashing behavior
+    os.environ["PYTHONHASHSEED"] = str(seed)
+    print(f"Random seed set as {seed}")
+
+
+set_all_seeds(seed)
+
 
 if __name__ == "__main__":
     # Parse command line arguments
@@ -435,11 +459,11 @@ if __name__ == "__main__":
 
     if args.mode == "grpo":
         # Setup and imports
-        os.environ["WANDB_CONSOLE"] = "wrap" 
-        wandb.init(project="chartrl", entity="chartrl")
+        # os.environ["WANDB_CONSOLE"] = "wrap" 
+        # wandb.init(project="chartrl", entity="chartrl")
 
         from trl import (GRPOConfig, GRPOTrainer, get_peft_config)
-        from grpo_utils import format_reward, accuracy_reward, length_think_reward, num_token_reward
+        from grpo_utils import format_reward, accuracy_reward, length_think_reward, num_token_reward, chart_type_reward
 
 
         # if args.sft_lora:
@@ -449,49 +473,71 @@ if __name__ == "__main__":
         #     logging.info("Loaded model with SFT adapters from {}".format(adapter_path))
 
 
-        ### Messy - fix
-        all_datasets = []
-        dataset = ChartDataset("chartqa-src", processor=processor)
-        train_dataset = dataset.load_chart_dataset(split = "train")
-        all_datasets.append(train_dataset)
-        dataset = ChartDataset("figqa", processor=processor)
-        train_dataset = dataset.load_chart_dataset(split = "train")
-        all_datasets.append(train_dataset)
-        dataset = PlotQADataset("plotqa", processor=processor)
-        train_dataset = dataset.load_plotqa_dataset(split = "train")
-        all_datasets.append(train_dataset)
-        dataset = ChartDataset("chartfc", processor=processor)
-        train_dataset = dataset.load_chart_dataset(split = "train")
-        all_datasets.append(train_dataset)
+        if os.path.exists(str(cache_dir+"/grpo-run1-dataset")):
+            import json
+            from datasets import load_from_disk
+            train_dataset = load_from_disk(str(cache_dir+"/grpo-run1-dataset"))
+            logging.info("Loaded train dataset from cache")
+            with open("./rationales_llm/rationales_qwen72b_chartqa.json", "r") as f:
+                rationales = json.load(f)
+            logging.info("Loaded rationales+charty types from json")
 
-        all_datasets[0] = all_datasets[0].remove_columns('human_or_machine')
-        all_datasets[2] = all_datasets[2].remove_columns('image_index')
-        all_datasets[2] = all_datasets[2].remove_columns('qid')
-        all_datasets[2] = all_datasets[2].remove_columns('answer_id')
-        all_datasets[2] = all_datasets[2].remove_columns('type')
-        all_datasets[2] = all_datasets[2].remove_columns('question_id')
-        all_datasets[2] = all_datasets[2].rename_column('question_string', 'query')
-        all_datasets[3] = all_datasets[3].rename_column('question','query')
+        else:
+            ### Messy - fix
+            all_datasets = []
+            dataset = ChartDataset("chartqa-src", processor=processor)
+            train_dataset = dataset.load_chart_dataset(split = "train")
+            all_datasets.append(train_dataset)
+            dataset = ChartDataset("figqa", processor=processor)
+            train_dataset = dataset.load_chart_dataset(split = "train")
+            all_datasets.append(train_dataset)
+            dataset = PlotQADataset("plotqa", processor=processor)
+            train_dataset = dataset.load_plotqa_dataset(split = "train")
+            all_datasets.append(train_dataset)
+            dataset = ChartDataset("chartfc", processor=processor)
+            train_dataset = dataset.load_chart_dataset(split = "train")
+            all_datasets.append(train_dataset)
 
-        all_datasets = [dst.shuffle(seed=seed).select(range(3000)) for dst in all_datasets]
-        from datasets import concatenate_datasets
-        train_dataset = concatenate_datasets(all_datasets)
+            all_datasets[0] = all_datasets[0].remove_columns('human_or_machine')
+            all_datasets[2] = all_datasets[2].remove_columns('image_index')
+            all_datasets[2] = all_datasets[2].remove_columns('qid')
+            all_datasets[2] = all_datasets[2].remove_columns('answer_id')
+            all_datasets[2] = all_datasets[2].remove_columns('type')
+            all_datasets[2] = all_datasets[2].remove_columns('question_id')
+            all_datasets[2] = all_datasets[2].rename_column('question_string', 'query')
+            all_datasets[3] = all_datasets[3].rename_column('question','query')
 
-        dataset = ChartDataset("chartqa-src", processor=processor)
-        train_dataset = train_dataset.map(dataset.grpo_format_data,num_proc=32)#.shuffle(seed=seed)#.select(range(5000))
+            all_datasets = [dst.shuffle(seed=seed).select(range(3000)) for dst in all_datasets]
+            from datasets import concatenate_datasets
+            train_dataset = concatenate_datasets(all_datasets)
+
+            
+
+            dataset = ChartDataset("chartqa-src", processor=processor)
+            train_dataset = train_dataset.map(dataset.grpo_format_data,num_proc=32)#.shuffle(seed=seed)#.select(range(5000))
         # train_dataset = train_dataset.map(dataset.grpo_format_data,num_proc=32).shuffle(seed=seed).select(range(1680,5000))
+        
         eval_dataset = eval_dataset.map(dataset.grpo_format_data,num_proc=32).select(range(200))
+
+
+        def _add_keys(example, idx):
+            rsn = rationales[idx].split("### Type: ")[0].split("### Reasoning: ")[-1].strip()
+            typ = rationales[idx].split("### Type: ")[-1].strip()
+            example["reasoning"], example["chart_type"]= rsn, typ
+            return example
+        
+        train_dataset = train_dataset.map(_add_keys, with_indices=True, num_proc=32)
 
         logging.info("Loaded model and datasets")
 
         training_args = GRPOConfig(
         # output_dir=args.vlm_name+"grpo-answer-think-preappend",  # Directory to save the model
-        # output_dir="random-testing",  # Directory to save the model
+        output_dir="random-testing",  # Directory to save the model
         # output_dir=args.vlm_name+"grpo-no-thinking-format-accuracy",  # Directory to save the model
-        output_dir = "grpo-start-ckpts/"+args.vlm_name+"grpo-f-a-l-full-model-cot-v3-all-data",  # Directory to save the model
+        # output_dir = "grpo-start-ckpts/"+args.vlm_name+"grpo-f-a-l-gt-v0",  # Directory to save the model
         bf16=True,
         remove_unused_columns = False,
-        per_device_train_batch_size=2,
+        per_device_train_batch_size=4,
         num_train_epochs=2,
         logging_steps=50,
         max_prompt_length = 6144,
@@ -514,7 +560,7 @@ if __name__ == "__main__":
         trainer = GRPOTrainer(
             model=model,
             args=training_args,
-            reward_funcs=[format_reward, accuracy_reward, length_think_reward, num_token_reward],
+            reward_funcs=[format_reward, accuracy_reward, length_think_reward, num_token_reward, chart_type_reward],
             train_dataset=train_dataset,
             eval_dataset=eval_dataset,
             processing_class=processor,

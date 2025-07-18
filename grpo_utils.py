@@ -6,7 +6,7 @@ import re
 def format_reward(completions, **kwargs):
         """Reward function that checks if the completion has a specific format."""
         # pattern = r"^<think>\n.*?\n</think>\n<answer>\n.*?\n</answer>$"
-        pattern = r"<type>.*?</type><think>.*?</think>\s*<answer>.*?</answer>"
+        pattern = r"<type>.*?</type>\s*<think>.*?</think>\s*<answer>.*?</answer>"
         # TAG_RE = re.compile(r"<think>\s*[\s\S]+?\s*</think>\s*<answer>\s*[\s\S]+?\s*</answer>\s*\Z",flags=re.DOTALL | re.IGNORECASE,)
 
         # TAG_RE = re.compile(r"<answer>\s*[\s\S]+?\s*</answer>\s*\Z",flags=re.DOTALL | re.IGNORECASE,)
@@ -99,22 +99,18 @@ def length_think_reward(completions, **kwargs):
     print("Length Rewards:", rewards)
     return rewards
 
-def graph_type_reward(completions, **kwargs):
+
+def chart_type_reward(completions, chart_type, **kwargs):
     rewards = []
-    graph_type = completions
-    for completion, gtype in zip(completions, graph_type):
+    for completion, c_type in zip(completions, chart_type):
         reward = 0.0
-        if "<type>" in completion:
-            rewards.append(1.0)
-        else:
-            rewards.append(0.0)
-        # try:
-        #     pred_type = completion.split("<type>")[-1].strip().split("</type>")[0].strip().lower()
-        #     if pred_type == gtype.lower():
-        #         reward = 2.0
-        # except Exception as e:
-        #     reward = 0.0
-        # rewards.append(reward)
+        try:
+            pred_type = completion.split("<type>")[-1].strip().split("</type>")[0].strip().lower()
+            if pred_type == c_type.lower():
+                reward = 1.0
+        except Exception as e:
+            reward = 0.0
+        rewards.append(reward)
     print("Graph Type Rewards:", rewards)
     return rewards
 
