@@ -19,6 +19,7 @@ Huge thanks to the team at Morgan Stanley for their support.
 | Qwen‑2.5 VL‑Instruct       | CoT             | 73.12            | 93.44         | 52.80           | Very bad rationales       |
 | Qwen‑2.5 VL‑Instruct – SFT | CoT             | —                | —             | —               | No rationales             |
 | Qwen‑2.5 VL‑Instruct       | GRPO (naïve)    | 77.00            | 89.44         | 64.56           | Good rationales           |
+| ChartInstruct-Flan-T5-XL       | Direct          | 72.00            | 93.84         | 50.16           | No rationales  
 | ChartGemma   | CoT        | 80.16        | 90.80     | 69.52       | **Solid rationales**      |
 | **Qwen‑2.5 VL‑Instruct (Ours)**   | **GRPO**        | **86.80**        | **94.40**     | **79.20**       | **Solid rationales**      |
 
