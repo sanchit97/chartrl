@@ -17,7 +17,7 @@ Huge thanks to the team at Morgan Stanley for their support.
 | Qwen‑2.5 VL‑Instruct       | Direct          | 82.00            | 92.64         | 71.36           | No rationales             |
 | Qwen‑2.5 VL‑Instruct – SFT | Direct          | —                | —             | —               | No rationales             |
 | Qwen‑2.5 VL‑Instruct       | CoT             | 73.12            | 93.44         | 52.80           | Very bad rationales       |
-| Qwen‑2.5 VL‑Instruct – SFT | CoT             | —                | —             | —               | No rationales             |
+| Qwen‑2.5 VL‑Instruct – SFT - rationales from QwenVL72b | CoT | 85.96  | 93.60  | 78.32              | **Solid rationales**             |
 | **Qwen‑2.5 VL‑Instruct (Ours - naive)**   | **GRPO**        | **82.12**        | **93.28**     | **70.96**       | **Solid rationales**      | \
 | **Qwen‑2.5 VL‑Instruct (Ours)**   | **GRPO**        | **82.92**        | **94.40**     | **72.16**       | **Solid rationales**      | \
 | ChartInstruct-Flan-T5-XL       | Direct          | 72.00            | 93.84         | 50.16           | No rationales  
