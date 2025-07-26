@@ -5,6 +5,7 @@ import time
 import pickle
 import random
 import argparse
+import json
 
 os.environ["FLASH_ATTENTION_2_ENABLED"] = "1"
 # os.environ["MASTER_ADDR"] = "127.0.0.1"
@@ -150,23 +151,32 @@ if __name__ == "__main__":
         if args.icl:
             train_dataset = dataset.load(split = "train")
 
+    elif args.dataset_name == "evochart":
+        dataset = ChartDataset("evochart", processor=processor)
+        test_dataset = dataset.load_chart_dataset(split = "test")
+
     
     # Load the model and processor
     if args.mode == "eval":
-        blocks = 2 if args.cot else 1 # 1 is Direct Prompting, 2 is COT, 3 is GRPO COT 
+        blocks = 4 if args.cot else 1 # 1 is Direct Prompting, 2 is COT, 3 is GRPO COT 
         logging.info("Blocks:", blocks)
         # SFT adapter
         if args.sft_lora:
             # adapter_path = args.sft_lora
-            adapter_path = "qwen-7b-train-chartqa-v4-all-warmup"
-
+            # adapter_path = "qwen-7b-train-chartqa-v4-all-warmup"
+            sft_model_path = "/mnt/home/sanchit/Qwen2-VL-Finetune/output/sft-2.5-3b-chartqa-rationales/"
             # adapter_path = "/mnt/home/sanchit/Qwen2-VL-Finetune/output/chartqa_lora-v0"
             # adapter_path = "/mnt/home/sanchit/Qwen2-VL-Finetune/output/chartqa_lora-v0-train-all"
             # adapter_path = "/mnt/home/sanchit/Qwen2-VL-Finetune/output/chartqa_lora-v0"
             # adapter_path = "llava-1.6-base-train-charttotext"
-            model = PeftModel.from_pretrained(model, adapter_path)
-            model = model.merge_and_unload()
-            logging.info("Loaded model with SFT adapters from {}".format(adapter_path))
+            # model = PeftModel.from_pretrained(model, adapter_path)
+            # model = model.merge_and_unload()
+            # logging.info("Loaded model with SFT adapters from {}".format(adapter_path))
+
+            from transformers import  Qwen2_5_VLForConditionalGeneration, Qwen2_5_VLProcessor
+            model = Qwen2_5_VLForConditionalGeneration.from_pretrained(sft_model_path, device_map="auto", local_files_only=True)
+            model.eval()
+            logging.info("Loaded model with SFT adapters from {}".format(sft_model_path))
 
         # DPO adapter
         if args.dpo_lora:
@@ -204,10 +214,15 @@ if __name__ == "__main__":
             # model = PeftModel.from_pretrained(model, adapter_path)
             # model = model.merge_and_unload()
             from transformers import  Qwen2_5_VLForConditionalGeneration, Qwen2_5_VLProcessor
-            model = Qwen2_5_VLForConditionalGeneration.from_pretrained("/mnt/home/sanchit/rl-chart/grpo-start-ckpts/qwen2-5-7bgrpo-f-a-l-full-model-cot-v3-all-data/checkpoint-2500/", device_map="auto", local_files_only=True)
+            # grpo_path = "/mnt/home/sanchit/rl-chart/grpo-start-ckpts/qwen2-5-3bgrpo-f-a-l-gt-tab-v0/checkpoint-8000/"
+            # grpo_path = "/mnt/home/sanchit/rl-chart/grpo-start-ckpts//mnt/home/sanchit/rl-chart/grpo-start-ckpts/qwen2-5-7bgrpo-f-a-l-full-model-cot-v3-all-data/checkpoint-2500/"
+            # grpo_path = "/mnt/home/sanchit/rl-chart/grpo-start-ckpts/qwen2-5-3bgrpo-f-a-l-gt-tab-custom-set/checkpoint-500/"
+            # grpo_path = "/mnt/home/sanchit/rl-chart/test-lim-data/checkpoint-1500/"
+            grpo_path = "/mnt/home/sanchit/rl-chart/prm/checkpoint-2000/"
+            model = Qwen2_5_VLForConditionalGeneration.from_pretrained(grpo_path, device_map="auto", local_files_only=True)
             model.eval()
-            blocks = 3
-            # logging.info("Loaded model with GRPO adapters from {}".format(adapter_path))
+
+            logging.info("Loaded model with GRPO adapters from {}".format(grpo_path))
 
 
         em_correct, ra_correct, tot_bleuscore, total = 0, 0, 0, 0
@@ -245,8 +260,11 @@ if __name__ == "__main__":
                     logging.info("Using automatic model device setting")
                     pred, rationale = get_vlm_output(model, processor, batch[0], batch[1], args.cot, blocks = blocks)
             # print(batch)
+            # print(pred[0])
+            # print(batch[2][0])
             print(pred)
             print(batch[2])
+            # print("#####")
             # print(rationale)
             # breakpoint()
             # TODO: Understand why this takes so long (and optimize)
@@ -459,115 +477,238 @@ if __name__ == "__main__":
 
     if args.mode == "grpo":
         # Setup and imports
-        # os.environ["WANDB_CONSOLE"] = "wrap" 
-        # wandb.init(project="chartrl", entity="chartrl")
+        os.environ["WANDB_CONSOLE"] = "wrap" 
+        wandb.init(project="chartrl", entity="chartrl")
 
         from trl import (GRPOConfig, GRPOTrainer, get_peft_config)
-        from grpo_utils import format_reward, accuracy_reward, length_think_reward, num_token_reward, chart_type_reward
+        from grpo_utils import format_reward,\
+             accuracy_reward,\
+             length_think_reward,\
+             num_token_reward,\
+             chart_type_reward,\
+             table_style_reward,\
+             process_style_reward
 
 
-        # if args.sft_lora:
-        #     adapter_path = "/mnt/home/sanchit/Qwen2-VL-Finetune/output/chartqa_lora-v0"
-        #     model = PeftModel.from_pretrained(model, adapter_path)
-        #     model = model.merge_and_unload()
-        #     logging.info("Loaded model with SFT adapters from {}".format(adapter_path))
+        blocks = 4
 
+        def _resize_up(img):
+            from PIL import Image as PILImage
+            MIN_PIXELS = 320 * 28 * 28            # 1 003 520
+            # MAX_PIXELS = 16384 * 28 * 28           # 12 843 776
+            MAX_PIXELS = 320 * 28 * 28           # 12 843 776 (about 500x500)
 
-        if os.path.exists(str(cache_dir+"/grpo-run1-dataset")):
-            import json
-            from datasets import load_from_disk
-            train_dataset = load_from_disk(str(cache_dir+"/grpo-run1-dataset"))
-            logging.info("Loaded train dataset from cache")
-            with open("./rationales_llm/rationales_qwen72b_chartqa.json", "r") as f:
+            img = img.convert("RGB")
+            w, h = img.size
+            p = w * h
+            if MIN_PIXELS <= p <= MAX_PIXELS:
+                return img
+            tgt_p  = max(min(p, MAX_PIXELS), MIN_PIXELS)
+            scale  = (tgt_p / p) ** 0.5
+            new_wh = (int(w * scale), int(h * scale))
+            return img.resize(new_wh, PILImage.BICUBIC)
+
+        def _grpo_format_data(example):
+                from prompts import SYSTEM_PROMPT_TEMPLATES
+                SYSTEM_PROMPT = SYSTEM_PROMPT_TEMPLATES[blocks]
+                conversation = [
+                    {"role": "system", "content": SYSTEM_PROMPT},
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "image"},
+                            {"type": "text", "text": example["query"]},
+                        ],
+                    },
+                    # {"role": "assistant", "content": [{"type": "text", "text": "<think>"}]},
+                ]
+                prompt = processor.apply_chat_template(conversation, add_generation_prompt=True, truncation=False)
+
+                return {
+                    "prompt": prompt,
+                    "image": _resize_up(example["image"]),
+                }
+
+        custom = True
+
+        if custom == True:
+            grpo_dataset_path = "/grpo-custom-dataset-no-figqa-with-type-4"
+            if os.path.exists(str(cache_dir+grpo_dataset_path)):
+                import json
+                from datasets import load_from_disk
+                train_dataset = load_from_disk(str(cache_dir+grpo_dataset_path))
+                logging.info("Loaded train dataset from cache")
+
+            else:
+                ### Messy - fix TODO
+                all_datasets = []
+                dataset = ChartDataset("chartqa-src", processor=processor, blocks=blocks)
+                train_dataset = dataset.load_chart_dataset(split = "train")
+                all_datasets.append(train_dataset)
+                dataset = ChartDataset("figqa", processor=processor, blocks=blocks)
+                train_dataset = dataset.load_chart_dataset(split = "train")
+                all_datasets.append(train_dataset)
+                dataset = PlotQADataset("plotqa", processor=processor, blocks=blocks)
+                train_dataset = dataset.load_plotqa_dataset(split = "train")
+                all_datasets.append(train_dataset)
+                dataset = ChartDataset("chartfc", processor=processor, blocks=blocks)
+                train_dataset = dataset.load_chart_dataset(split = "train")
+                all_datasets.append(train_dataset)
+
+                all_datasets[0] = all_datasets[0].remove_columns('human_or_machine')
+                all_datasets[2] = all_datasets[2].remove_columns('image_index')
+                all_datasets[2] = all_datasets[2].remove_columns('qid')
+                all_datasets[2] = all_datasets[2].remove_columns('answer_id')
+                all_datasets[2] = all_datasets[2].remove_columns('type')
+                all_datasets[2] = all_datasets[2].remove_columns('question_id')
+                all_datasets[2] = all_datasets[2].rename_column('question_string', 'query')
+                all_datasets[3] = all_datasets[3].rename_column('question','query')
+
+                def _collapse_no(example):
+                    is_none_label = example["label"] == None 
+                    is_none_ans =  example["answer"] == None
+                    # Harmonise both columns
+                    example["label"]  = example["answer"] if is_none_label else example["label"]
+                    return example
+
+                all_datasets = [dst.shuffle(seed=seed).select(range(1000)) for dst in all_datasets]
+                all_datasets = all_datasets[:1]+ all_datasets[2:]
+                from datasets import concatenate_datasets
+                train_dataset = concatenate_datasets(all_datasets)
+                train_dataset = train_dataset.map(_collapse_no, num_proc=32)
+                train_dataset = train_dataset.remove_columns('answer')
+                
+                grpo_train_dataset = train_dataset.map(_grpo_format_data,num_proc=32,load_from_cache_file=False)#.shuffle(seed=seed)#.select(range(5000))
+                print(grpo_train_dataset[0]['prompt'])
+                logging.info("Created Dataset and saved to disk")
+                grpo_train_dataset.save_to_disk(str(cache_dir+grpo_dataset_path))
+                exit(0)
+            # train_dataset = train_dataset.map(dataset.grpo_format_data,num_proc=32).shuffle(seed=seed).select(range(1680,5000))
+            
+            with open("./rationales_llm/rationales-custom-data.json", "r") as f:
                 rationales = json.load(f)
-            logging.info("Loaded rationales+charty types from json")
+                rationales = rationales[:1000]+rationales[2000:]
+                logging.info("Loaded rationales+chart types from json")            
+            
+            errors = 0
+
+            def _add_keys(example, idx):
+                global errors
+                rsn = rationales[idx].split("### Reasoning: ")[-1].strip().split("### Type: ")[0]
+                # rsn = rationales[idx].split("### Type: ")[0].split("### Reasoning: ")[-1].strip()
+                if "### Type: " in rationales[idx]:
+                    typ = rationales[idx].split("### Type: ")[-1].strip()
+                else:
+                    typ = "bar"
+                
+                try:
+                    tab_string = rationales[idx].split("```json")[-1].split("```")[0].split("### Reasoning")[0].strip()
+                    tab_string = tab_string.replace('\n', '')
+                    tab = None
+                    # Repair
+                    if not tab_string.endswith("}"):
+                        tab_string += "}"
+                    try:
+                        tab = json.loads(tab_string, parse_int=str, parse_float=str, parse_constant=str)
+                    except:
+                        # print("Error in parsing", tab_string)
+                        errors+=1
+                        pass
+                except:
+                    errors+=1
+                    # print("Error in table loading", tab_string)
+                example["reasoning"], example["chart_type"], example ["table"]= rsn, typ, tab
+                return example
+            
+            grpo_train_dataset = train_dataset.map(_add_keys, with_indices=True, num_proc=1,load_from_cache_file=False)
+            print(errors)
+
+            # Eval dataset is different from custom but to compare benchmarks we need this
+            # grpo_dataset_path = "/grpo-chartqa-with-type-3-longer-thinking"
+            dataset = ChartDataset("chartqa-src", processor=processor, blocks=blocks)
+            eval_dataset = dataset.load_chart_dataset(split = "val")
+            eval_dataset = eval_dataset.map(_grpo_format_data, num_proc=32,load_from_cache_file=False).select(range(200))
+            grpo_eval_dataset = eval_dataset.map(_add_keys, with_indices=True, num_proc=32, load_from_cache_file=False)
+
+            logging.info("Loaded model and datasets")
+            logging.info("First train sample:", grpo_train_dataset[-1])
+            # logging.info("First train sample:", grpo_eval_dataset[-1])
+            # breakpoint()
+
+
 
         else:
-            ### Messy - fix
-            all_datasets = []
-            dataset = ChartDataset("chartqa-src", processor=processor)
-            train_dataset = dataset.load_chart_dataset(split = "train")
-            all_datasets.append(train_dataset)
-            dataset = ChartDataset("figqa", processor=processor)
-            train_dataset = dataset.load_chart_dataset(split = "train")
-            all_datasets.append(train_dataset)
-            dataset = PlotQADataset("plotqa", processor=processor)
-            train_dataset = dataset.load_plotqa_dataset(split = "train")
-            all_datasets.append(train_dataset)
-            dataset = ChartDataset("chartfc", processor=processor)
-            train_dataset = dataset.load_chart_dataset(split = "train")
-            all_datasets.append(train_dataset)
+            grpo_dataset_path = "/grpo-chartqa-with-type-3-longer-thinking"
+            if not os.path.exists(cache_dir+grpo_dataset_path):
+                dataset = ChartDataset("chartqa-src", processor=processor, blocks=blocks)
+                train_dataset = dataset.load_chart_dataset(split = "train")
+                eval_dataset = dataset.load_chart_dataset(split = "val")
+                grpo_train_dataset = train_dataset.map(_grpo_format_data,num_proc=32,load_from_cache_file=False)
+                grpo_eval_dataset = eval_dataset.map(_grpo_format_data,num_proc=32,load_from_cache_file=False).select(range(200))
+                
+                with open("./rationales_llm/rationales-chartqa-data-only_qwen72b.json", "r") as f:
+                    rationales = json.load(f)
 
-            all_datasets[0] = all_datasets[0].remove_columns('human_or_machine')
-            all_datasets[2] = all_datasets[2].remove_columns('image_index')
-            all_datasets[2] = all_datasets[2].remove_columns('qid')
-            all_datasets[2] = all_datasets[2].remove_columns('answer_id')
-            all_datasets[2] = all_datasets[2].remove_columns('type')
-            all_datasets[2] = all_datasets[2].remove_columns('question_id')
-            all_datasets[2] = all_datasets[2].rename_column('question_string', 'query')
-            all_datasets[3] = all_datasets[3].rename_column('question','query')
+                logging.info("Loaded rationales+chart types from json")
+                def _add_keys(example, idx):
+                    rsn = rationales[idx].split("### Type: ")[0].split("### Reasoning: ")[-1].strip()
+                    typ = rationales[idx].split("### Type: ")[-1].strip()
+                    # tab = rationales[idx].strip()
+                    example["reasoning"], example["chart_type"] = rsn, typ
+                    # example["reasoning"], example["chart_type"], example ["table"]= rsn, typ, tab
+                    return example
+                grpo_train_dataset = grpo_train_dataset.map(_add_keys, with_indices=True, num_proc=32,load_from_cache_file=False)
+                grpo_eval_dataset = grpo_eval_dataset.map(_add_keys, with_indices=True, num_proc=32,load_from_cache_file=False)
+                grpo_train_dataset.save_to_disk(str(cache_dir+grpo_dataset_path))
+                grpo_eval_dataset.save_to_disk(str(cache_dir+grpo_dataset_path+"-eval"))
+            else:
+                from datasets import load_from_disk
+                grpo_train_dataset = load_from_disk(str(cache_dir+grpo_dataset_path)).select(range(1000))
+                grpo_eval_dataset = load_from_disk(str(cache_dir+grpo_dataset_path+"-eval"))
+                
+                
 
-            all_datasets = [dst.shuffle(seed=seed).select(range(3000)) for dst in all_datasets]
-            from datasets import concatenate_datasets
-            train_dataset = concatenate_datasets(all_datasets)
-
-            
-
-            dataset = ChartDataset("chartqa-src", processor=processor)
-            train_dataset = train_dataset.map(dataset.grpo_format_data,num_proc=32)#.shuffle(seed=seed)#.select(range(5000))
-        # train_dataset = train_dataset.map(dataset.grpo_format_data,num_proc=32).shuffle(seed=seed).select(range(1680,5000))
-        
-        eval_dataset = eval_dataset.map(dataset.grpo_format_data,num_proc=32).select(range(200))
-
-
-        def _add_keys(example, idx):
-            rsn = rationales[idx].split("### Type: ")[0].split("### Reasoning: ")[-1].strip()
-            typ = rationales[idx].split("### Type: ")[-1].strip()
-            example["reasoning"], example["chart_type"]= rsn, typ
-            return example
-        
-        train_dataset = train_dataset.map(_add_keys, with_indices=True, num_proc=32)
-
-        logging.info("Loaded model and datasets")
+        # start from an SFT checkpoint
+        # sft_model_path = "/mnt/home/sanchit/Qwen2-VL-Finetune/output/sft-2.5-3b-chartqa-rationales/checkpoint-200"
+        # from transformers import  Qwen2_5_VLForConditionalGeneration, Qwen2_5_VLProcessor
+        # model = Qwen2_5_VLForConditionalGeneration.from_pretrained(sft_model_path)
+        # logging.info("Loaded model with SFT adapters from {}".format(sft_model_path))
 
         training_args = GRPOConfig(
         # output_dir=args.vlm_name+"grpo-answer-think-preappend",  # Directory to save the model
-        output_dir="random-testing",  # Directory to save the model
-        # output_dir=args.vlm_name+"grpo-no-thinking-format-accuracy",  # Directory to save the model
-        # output_dir = "grpo-start-ckpts/"+args.vlm_name+"grpo-f-a-l-gt-v0",  # Directory to save the model
+        # output_dir="full-chartqa-vanilla",  # Directory to save the model
+        # output_dir = "grpo-start-ckpts/"+args.vlm_name+"grpo-f-a-l-gt-tab-custom-set",  # Directory to save the model
+        # output_dir = "grpo-test/from-sft-"+args.vlm_name+"-format-accuracy-length-longer-1000samp",  # Directory to save the model
+        # output_dir = "test-lim-data",
+        output_dir = "prm",
         bf16=True,
         remove_unused_columns = False,
-        per_device_train_batch_size=4,
+        per_device_train_batch_size=2,
         num_train_epochs=2,
         logging_steps=50,
-        max_prompt_length = 6144,
+        max_prompt_length = 4096,
         eval_strategy="steps",
         eval_steps=500,
-        max_completion_length = 512,
-        num_generations = 8
+        max_completion_length = 768,
+        num_generations = 4,
+        # learning_rate = 8e-7,
+        # beta = 0.2,
         )
-
-        # grpo_peft_config = LoraConfig(
-        #             lora_alpha=1024,
-        #             # lora_alpha=16,
-        #             lora_dropout=0.05,
-        #             r=1024,
-        #             # r=16,
-        #             bias="none",
-        #             target_modules = target_modules
-        #             )
 
         trainer = GRPOTrainer(
             model=model,
             args=training_args,
-            reward_funcs=[format_reward, accuracy_reward, length_think_reward, num_token_reward, chart_type_reward],
-            train_dataset=train_dataset,
-            eval_dataset=eval_dataset,
+            reward_funcs=[format_reward, accuracy_reward, length_think_reward, num_token_reward, chart_type_reward, table_style_reward, process_style_reward],
+            # reward_funcs=[format_reward, accuracy_reward, length_think_reward], # vanilla
+            # reward_funcs=[format_reward, accuracy_reward, length_think_reward, num_token_reward], # vanilla
+            train_dataset=grpo_train_dataset,
+            eval_dataset=grpo_eval_dataset,  
             processing_class=processor,
-            # peft_config=grpo_peft_config,
+            # peft_config=grpo_peft_config, # No PEFT for now
         )
         
 
         trainer.train()
+
                     
 

@@ -44,7 +44,7 @@ os.environ['HF_HOME'] = '/mnt/data/sanchit/hf'
 
 # ChartQA
 class ChartDataset:
-    def __init__(self, dataset_name, processor=None):
+    def __init__(self, dataset_name, processor=None, blocks=None):
         self.dataset_name = dataset_name
         # self.dataset = self.load_chart_dataset(dataset_name, split, bsz)
         self.processor = processor
@@ -55,6 +55,8 @@ class ChartDataset:
         # Focus on delivering accurate, succinct answers based on the visual information. Avoid additional explanation unless absolutely necessary."""
 
         self.system_message = ""
+        self.blocks = blocks
+
 
     def load_chart_dataset(self, split=None):
         if self.dataset_name == "chartqa":
@@ -168,6 +170,34 @@ class ChartDataset:
             # return test_dataloader
             return data
         
+        if self.dataset_name == "evochart":
+            if os.path.exists(cache_dir+"/evochart_dataset"):
+                dataset = load_from_disk(str(cache_dir+"/evochart_dataset"))
+            else:
+                root = "./evochart/"
+                with open(root+'EvoChart-QA.json', 'r') as f:
+                    data = json.load(f)
+                data = [
+                    {
+                        "image": root+f"png/{d['imgname']}",
+                        "label": d["label"],
+                        "query": d["query"],
+                    }
+                    for d in data
+                ]
+                test_ds = Dataset.from_list(data).cast_column("image", Image())
+
+                evochart = DatasetDict({
+                                "test": test_ds,
+                            })
+
+                evochart.save_to_disk(str(cache_dir+"/evochart_dataset"))
+                dataset = evochart
+
+            data = dataset[split]
+            return data
+
+        
         elif self.dataset_name == "figqa":
             if os.path.exists(cache_dir+"/figqa_dataset"):
                 figqa = load_from_disk(str(cache_dir+"/figqa_dataset"))
@@ -214,6 +244,8 @@ class ChartDataset:
             dataloader = DataLoader(data, batch_size = bsz, collate_fn = self.collate_fn_figqa)
         elif self.dataset_name == "chartfc":
             dataloader = DataLoader(data, batch_size = bsz, collate_fn = self.collate_fn_chartfc)
+        elif self.dataset_name == "evochart":
+            dataloader = DataLoader(data, batch_size = bsz, collate_fn = self.collate_fn_evochart)
         return dataloader
 
     def collate_fn_chartqa(self, batch):
@@ -246,7 +278,23 @@ class ChartDataset:
 
         return image_batch, query_batch, label_batch, machine_human_batch
 
-    
+    def collate_fn_evochart(self, batch):
+        # for quick evals
+        image_batch = []
+        query_batch = []
+        label_batch = []
+        machine_human_batch = []
+        
+        for idx in range(len(batch)):
+            image_batch.append(batch[idx]['image'])
+            query_batch.append(batch[idx]['query'])
+            label_batch.append(batch[idx]['label'])
+            machine_human_batch.append(None)
+
+        return image_batch, query_batch, label_batch, machine_human_batch
+
+
+
     def collate_fn_chartqapro(self, batch):
         # for quick evals
         image_batch = []
@@ -488,28 +536,31 @@ class ChartDataset:
         return {"images": [example["image"]], "prompt": prompt, "chosen": chosen, "rejected": rejected}
 
 
-    def grpo_format_data(self, example, blocks=3):
-        SYSTEM_PROMPT = SYSTEM_PROMPT_TEMPLATES[blocks]
+    # def grpo_format_data(self, example):
+    #     if self.blocks is None:
+    #         print("Blocks is None! Cant understand prompt structure!")
+    #         exit(0)
         
-        conversation = [
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {
-                "role": "user",
-                "content": [
-                    {"type": "image"},
-                    {"type": "text", "text": example["query"]},
-                ],
-            },
-            # {"role": "assistant", "content": [{"type": "text", "text": "<think>"}]},
-        ]
-        prompt = self.processor.apply_chat_template(conversation, add_generation_prompt=True,truncation=False)
-        # prompt = self.processor.apply_chat_template(conversation, add_generation_prompt=False, continue_final_message=True,truncation=False)
+    #     SYSTEM_PROMPT = SYSTEM_PROMPT_TEMPLATES[self.blocks]
+    #     conversation = [
+    #         {"role": "system", "content": SYSTEM_PROMPT},
+    #         {
+    #             "role": "user",
+    #             "content": [
+    #                 {"type": "image"},
+    #                 {"type": "text", "text": example["query"]},
+    #             ],
+    #         },
+    #         # {"role": "assistant", "content": [{"type": "text", "text": "<think>"}]},
+    #     ]
+    #     prompt = self.processor.apply_chat_template(conversation, add_generation_prompt=True,truncation=False)
+    #     # prompt = self.processor.apply_chat_template(conversation, add_generation_prompt=False, continue_final_message=True,truncation=False)
 
-        return {
-            "prompt": prompt,
-            "image": self.resize_up(example["image"]),
-            # "image": example["image"],
-        }
+    #     return {
+    #         "prompt": prompt,
+    #         "image": self.resize_up(example["image"]),
+    #         # "image": example["image"],
+    #     }
     
     def resize_up(self, img):
         MIN_PIXELS = 320 * 28 * 28            # 1 003 520
@@ -529,10 +580,11 @@ class ChartDataset:
 
 # PlotQA/FigQA
 class PlotQADataset:
-    def __init__(self, dataset_name, processor=None):
+    def __init__(self, dataset_name, processor=None, blocks=None):
         self.dataset_name = dataset_name
         self.processor = processor
         self.system_message = ""
+        self.blocks = blocks
 
 
     def load_split(self, meta_file, img_dir):
@@ -943,130 +995,88 @@ class ChartToTextDataset:
 
 
 
-class Charxiv:
-    def __init__(self, dataset_name, processor=None):
-        self.dataset_name = dataset_name
-        # self.dataset = self.load_chart_dataset(dataset_name, split, bsz)
-        self.processor = processor
+# class Charxiv:
+#     def __init__(self, dataset_name, processor=None):
+#         self.dataset_name = dataset_name
+#         # self.dataset = self.load_chart_dataset(dataset_name, split, bsz)
+#         self.processor = processor
 
-        # self.system_message = """You are a Vision Language Model specialized in interpreting visual data from chart images.
-        # Your task is to analyze the provided chart image and respond to queries with concise answers, usually a single word, number, or short phrase.
-        # The charts include a variety of types (e.g., line charts, bar charts) and contain colors, labels, and text.
-        # Focus on delivering accurate, succinct answers based on the visual information. Avoid additional explanation unless absolutely necessary."""
+#         # self.system_message = """You are a Vision Language Model specialized in interpreting visual data from chart images.
+#         # Your task is to analyze the provided chart image and respond to queries with concise answers, usually a single word, number, or short phrase.
+#         # The charts include a variety of types (e.g., line charts, bar charts) and contain colors, labels, and text.
+#         # Focus on delivering accurate, succinct answers based on the visual information. Avoid additional explanation unless absolutely necessary."""
 
-        self.system_message = ""
+#         self.system_message = ""
 
-    def load_chart_dataset(self, split):
-        if self.dataset_name == "charxiv":
-            dataset = load_dataset("princeton-nlp/CharXiv", cache_dir = cache_dir)
-            data = dataset[split]
-            # test_dataloader = DataLoader(test_data, batch_size=1, collate_fn = collate_fn_chartqa)
-            # return test_dataloader
-            return data
+#     def load_chart_dataset(self, split):
+#         if self.dataset_name == "charxiv":
+#             dataset = load_dataset("princeton-nlp/CharXiv", cache_dir = cache_dir)
+#             data = dataset[split]
+#             # test_dataloader = DataLoader(test_data, batch_size=1, collate_fn = collate_fn_chartqa)
+#             # return test_dataloader
+#             return data
 
-    def create_loader(self, data, bsz=1):
-        dataloader = DataLoader(data, batch_size = bsz, collate_fn = self.collate_fn_chartqa)
-        return dataloader
+#     def create_loader(self, data, bsz=1):
+#         dataloader = DataLoader(data, batch_size = bsz, collate_fn = self.collate_fn_chartqa)
+#         return dataloader
 
-    def collate_fn_charxiv(self, batch):
-        # for quick evals
-        image_batch = []
-        query_batch = []
-        label_batch = []
-        machine_human_batch = []
+#     def collate_fn_charxiv(self, batch):
+#         # for quick evals
+#         image_batch = []
+#         query_batch = []
+#         label_batch = []
+#         machine_human_batch = []
         
-        for idx in range(len(batch)):
-            image_batch.append(batch[idx]['image'])
-            query_batch.append(batch[idx]['query'])
-            label_batch.append(batch[idx]['label'][0])
-            machine_human_batch.append(batch[idx]['human_or_machine'])
+#         for idx in range(len(batch)):
+#             image_batch.append(batch[idx]['image'])
+#             query_batch.append(batch[idx]['query'])
+#             label_batch.append(batch[idx]['label'][0])
+#             machine_human_batch.append(batch[idx]['human_or_machine'])
 
-        return image_batch, query_batch, label_batch, machine_human_batch
+#         return image_batch, query_batch, label_batch, machine_human_batch
 
-    def train_collate_fn_chartqa(self, examples): 
-        processor = self.processor  # Use the processor from the class instance, this is messy though #TODO
-        # For SFT/RL
-        # Get the texts and images, and apply the chat template
-        # st = time.time()
-        image_inputs = [process_vision_info(self.format_question(example))[0] for example in examples]
 
-        for example in examples:
-            example.pop('image')    # Remove the image key to avoid issues with the processor
-
-        texts = [processor.apply_chat_template(self.format_question_text_only(example), tokenize=False, add_generation_prompt=True) for example in examples]  # Prepare texts for processing
-        # Process the images to extract inputs
-        # just collect them into a list
-        # image_inputs = [[example['image']] for example in examples]
-
-        # Tokenize the texts and process the images
-        batch = processor(
-            text=texts, images=image_inputs, return_tensors="pt", padding=True
-        )  # Encode texts and images into tensors
-
-        batch["input_ids"] = batch["input_ids"]#.to(dtype=torch.long) 
-        # The labels are the input_ids, and we mask the padding tokens in the loss computation
-        labels = batch["input_ids"].clone()  # Clone input IDs for labels
-        labels[labels == processor.tokenizer.pad_token_id] = -100  # Mask padding tokens in labels
-
-        # Ignore the image token index in the loss computation (model specific)
-        if "qwen" in processor.__class__.__name__.lower():  # Check if the processor is Qwen2VLProcessor
-            # image_tokens = [151643, 151652, 151653, 151654, 151655, 151656]  # Specific image token IDs 
-            image_tokens = [151643, 151652, 151653, 151654, 151655]
-            # image_tokens = [processor.tokenizer.convert_tokens_to_ids(tok) for tok in processor.tokenizer.additional_special_tokens]
-        elif "intern" in processor.__class__.__name__.lower():
-            image_tokens = [92542, 92543, 92544, 92545, 92546]
-        else: #llava type models
-            image_tokens = [processor.tokenizer.convert_tokens_to_ids(processor.image_token)]  # Convert image token to ID
-
-        # Mask image token IDs in the labels
-        for image_token_id in image_tokens:
-            labels[labels == image_token_id] = -100  # Mask image token IDs in labels
-
-        batch["labels"] = labels  # Add labels to the batch
-        # logging.info("Time to process batch: ",time.time()   - st)  # Log the time taken for processing
-        breakpoint()
-        return batch  # Return the prepared batch
-
-    def format_question(self, example):
-        if "llava" in self.processor.__class__.__name__.lower():
-            return [
-            {
-                "role": "user",
-                "content": [
-                    {
-                        "type": "image",
-                        "image": example["image"],
-                    },
-                    {
-                        "type": "text",
-                        "text": example["query"],
-                    },
-                ],
-            },
-            {
-                "role": "assistant",
-                "content": [{"type": "text", "text": example["label"][0]}],
-            },]
-        else:
-            return [
-            {
-                "role": "system",
-                "content": [{"type": "text", "text": self.system_message}],
-            },
-            {
-                "role": "user",
-                "content": [
-                    {
-                        "type": "image",
-                        "image": example["image"],
-                    },
-                    {
-                        "type": "text",
-                        "text": example["query"],
-                    },
-                ],
-            },
-            {
-                "role": "assistant",
-                "content": [{"type": "text", "text": example["label"][0]}],
-            },]
+#     def format_question(self, example):
+#         if "llava" in self.processor.__class__.__name__.lower():
+#             return [
+#             {
+#                 "role": "user",
+#                 "content": [
+#                     {
+#                         "type": "image",
+#                         "image": example["image"],
+#                     },
+#                     {
+#                         "type": "text",
+#                         "text": example["query"],
+#                     },
+#                 ],
+#             },
+#             {
+#                 "role": "assistant",
+#                 "content": [{"type": "text", "text": example["label"][0]}],
+#             },]
+#         else:
+#             return [
+#             {
+#                 "role": "system",
+#                 "content": [{"type": "text", "text": self.system_message}],
+#             },
+#             {
+#                 "role": "user",
+#                 "content": [
+#                     {
+#                         "type": "image",
+#                         "image": example["image"],
+#                     },
+#                     {
+#                         "type": "text",
+#                         "text": example["query"],
+#                     },
+#                 ],
+#             },
+#             {
+#                 "role": "assistant",
+#                 "content": [{"type": "text", "text": example["label"][0]}],
+#             },]
+        

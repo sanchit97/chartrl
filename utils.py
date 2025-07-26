@@ -24,7 +24,7 @@ MAX_PIXELS = 16384 * 28 * 28           # 12 843 776
 
 
 def get_vlm_output(model, processor, image, query, cot = False, icl_samples=None, model_device = None, blocks=2):
-    max_new_tokens = 256 if cot else 100 # To speed up inference when not cot
+    max_new_tokens = 768 if cot else 100 # To speed up inference when not cot
     rationale = None # only used when cot=True
 
     # For ICL
@@ -67,6 +67,9 @@ def get_vlm_output(model, processor, image, query, cot = False, icl_samples=None
             },
             ])
 
+        elif "gemma" in model.__class__.__name__.lower():  
+            messages.append("program of thought: " + q)
+
         # messages.append([
             # {
             #     "role": "system",
@@ -105,7 +108,8 @@ def get_vlm_output(model, processor, image, query, cot = False, icl_samples=None
 
     elif "gemma" in model.__class__.__name__.lower():
         # prompt = processor.apply_chat_template(messages, add_generation_prompt=True)
-        prompt = query
+        prompt = messages
+        # prompt = [q for q in query]
         image = [img.convert("RGB") for img in image]
         inputs = processor(images=image, text=prompt, return_tensors="pt", padding=True).to(model.device)
         input_len = inputs["input_ids"].shape[-1]
@@ -113,11 +117,19 @@ def get_vlm_output(model, processor, image, query, cot = False, icl_samples=None
         # inputs = {k: v.to(model.device) for k, v in inputs.items()}
         output = model.generate(**inputs, max_new_tokens=max_new_tokens, do_sample = False)
         out_text = processor.batch_decode(output[:,input_len:], skip_special_tokens=True)
-        breakpoint()
-        # out_text = [o.split(" ")[-1].strip() for o in out_text]
-        if cot:
-            pred_text = [out.split("### Answer:")[-1].strip() for out in out_text]
-            rationale = [out.split("### Reason:")[-1].split("### Answer")[0].strip("\n") for out in out_text]
+        # breakpoint()
+        pattern = re.compile(r'^\s*print\(\s*([\'"])(.*?)\1\s*\)\s*$')
+        # out_text = [pattern.match(o) for o in out_text]
+        # out_text = [m.group(2) if m else "" for m in out_text]
+        # print(out_text)
+        # if cot:
+        #     pred_text = [out.split("### Answer:")[-1].strip() for out in out_text]
+        #     rationale = [out.split("### Reason:")[-1].split("### Answer")[0].strip("\n") for out in out_text]
+        #     out_text = pred_text
+
+        if cot: 
+            pred_text = [out.split("<answer>")[-1].strip().split("</answer>")[0].strip() for out in out_text]
+            rationale = [out.split("<think>")[-1].strip().split("</think>")[0].strip("\n") for out in out_text]
             out_text = pred_text
 
 
@@ -242,8 +254,6 @@ def get_prompt_temp(q, cot=False):
         # prefix = "{question}\n Please try to answer the question with short words or phrases if possible.".format(question=q)
         prefix = "{question}".format(question=q)
 
-        # prefix = "Look at the chart. %s Answer with one word only no other text."%q
-        # prefix = "Look at the chart. %s. Answer in 100 words or fewer."%q
     return prefix
 
 
