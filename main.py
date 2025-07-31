@@ -8,8 +8,6 @@ import argparse
 import json
 
 os.environ["FLASH_ATTENTION_2_ENABLED"] = "1"
-# os.environ["MASTER_ADDR"] = "127.0.0.1"
-# os.environ["MASTER_PORT"]= 29501
 
 import torch
 import numpy as np
@@ -34,7 +32,7 @@ from utils import get_vlm_output, clear_memory, format_data, select_icl_samples
 import logging, os
 
 
-seed = 2025
+seed = 2026
 
 
 logging.basicConfig(
@@ -155,24 +153,25 @@ if __name__ == "__main__":
         dataset = ChartDataset("evochart", processor=processor)
         test_dataset = dataset.load_chart_dataset(split = "test")
 
+    elif args.dataset_name == "chartllama":
+        dataset = ChartDataset("chartllama", processor=processor)
+        test_dataset = dataset.load_chart_dataset(split = "test")
+
+    elif args.dataset_name == "chartbench":
+        dataset = ChartDataset("chartbench", processor=processor)
+        test_dataset = dataset.load_chart_dataset(split = "test")
+
+    elif args.dataset_name == "chartx":
+        dataset = ChartDataset("chartx", processor=processor)
+        test_dataset = dataset.load_chart_dataset(split = "test")
     
     # Load the model and processor
     if args.mode == "eval":
-        blocks = 4 if args.cot else 1 # 1 is Direct Prompting, 2 is COT, 3 is GRPO COT 
+        blocks = 4 if args.cot else 1 # 1 is Direct Prompting, 2 is typical COT, 4 is COT, 4 is GRPO COT 
         logging.info("Blocks:", blocks)
         # SFT adapter
         if args.sft_lora:
-            # adapter_path = args.sft_lora
-            # adapter_path = "qwen-7b-train-chartqa-v4-all-warmup"
-            sft_model_path = "/mnt/home/sanchit/Qwen2-VL-Finetune/output/sft-2.5-3b-chartqa-rationales/"
-            # adapter_path = "/mnt/home/sanchit/Qwen2-VL-Finetune/output/chartqa_lora-v0"
-            # adapter_path = "/mnt/home/sanchit/Qwen2-VL-Finetune/output/chartqa_lora-v0-train-all"
-            # adapter_path = "/mnt/home/sanchit/Qwen2-VL-Finetune/output/chartqa_lora-v0"
-            # adapter_path = "llava-1.6-base-train-charttotext"
-            # model = PeftModel.from_pretrained(model, adapter_path)
-            # model = model.merge_and_unload()
-            # logging.info("Loaded model with SFT adapters from {}".format(adapter_path))
-
+            sft_model_path = "/mnt/home/sanchit/Qwen2-VL-Finetune/output/sft-"+str(seed)+"/"
             from transformers import  Qwen2_5_VLForConditionalGeneration, Qwen2_5_VLProcessor
             model = Qwen2_5_VLForConditionalGeneration.from_pretrained(sft_model_path, device_map="auto", local_files_only=True)
             model.eval()
@@ -207,18 +206,14 @@ if __name__ == "__main__":
             logging.info("Loaded model with DPO adapters from {}".format(adapter_path))
         
         if args.grpo_lora:
-            # adapter_path = "qwen2-5-3bgrpo-format-only/checkpoint-7500"
-            # adapter_path = "qwen2-5-3bgrpo-format+accuracy-only/checkpoint-7500"
-            # adapter_path = "grpo-start-ckpts/qwen2-5-3bgrpo-answer-only/checkpoint-23000"
-            # adapter_path = "grpo-start-ckpts/grpo-full-model-6gen/checkpoint-500"
-            # model = PeftModel.from_pretrained(model, adapter_path)
-            # model = model.merge_and_unload()
             from transformers import  Qwen2_5_VLForConditionalGeneration, Qwen2_5_VLProcessor
             # grpo_path = "/mnt/home/sanchit/rl-chart/grpo-start-ckpts/qwen2-5-3bgrpo-f-a-l-gt-tab-v0/checkpoint-8000/"
             # grpo_path = "/mnt/home/sanchit/rl-chart/grpo-start-ckpts//mnt/home/sanchit/rl-chart/grpo-start-ckpts/qwen2-5-7bgrpo-f-a-l-full-model-cot-v3-all-data/checkpoint-2500/"
             # grpo_path = "/mnt/home/sanchit/rl-chart/grpo-start-ckpts/qwen2-5-3bgrpo-f-a-l-gt-tab-custom-set/checkpoint-500/"
             # grpo_path = "/mnt/home/sanchit/rl-chart/test-lim-data/checkpoint-1500/"
-            grpo_path = "/mnt/home/sanchit/rl-chart/prm/checkpoint-2000/"
+            # grpo_path = "/mnt/home/sanchit/rl-chart/prm/checkpoint-2500/"
+            grpo_path = "/mnt/home/sanchit/rl-chart/grpo-start-ckpts/qwen2-5-3b-prm-2026/checkpoint-4000/"
+
             model = Qwen2_5_VLForConditionalGeneration.from_pretrained(grpo_path, device_map="auto", local_files_only=True)
             model.eval()
 
@@ -236,6 +231,7 @@ if __name__ == "__main__":
         
         logging.info("Starting evaluation on {} samples".format(len(test_dataset)))
         logging.info("Using CoT: {}".format(args.cot))
+
 
         loader = dataset.create_loader(test_dataset, bsz=32)
 
@@ -260,12 +256,14 @@ if __name__ == "__main__":
                     logging.info("Using automatic model device setting")
                     pred, rationale = get_vlm_output(model, processor, batch[0], batch[1], args.cot, blocks = blocks)
             # print(batch)
-            # print(pred[0])
-            # print(batch[2][0])
-            print(pred)
-            print(batch[2])
-            # print("#####")
-            # print(rationale)
+            if args.vlm_name in ["chart-gemma"]:
+                print(pred[0])
+                print(batch[2][0])
+                print("#####")
+            else:
+                print(pred)
+                print(batch[2])
+                print(rationale)
             # breakpoint()
             # TODO: Understand why this takes so long (and optimize)
             bleu_score = 0
@@ -311,14 +309,6 @@ if __name__ == "__main__":
 
             # print("BLEU Score: ", tot_bleuscore/total)
         
-
-        # TODO: Same as above, more elegant way of handling this
-        # breakpoint()
-        # pickle.dump(open('./img-output/llava-1.6-mistakes.pkl'), wrongs)
-
-        # with open('./pref-data/llava-1.6-plotqa.pkl', 'wb') as f:
-        #     pickle.dump(pref_data, f)
-
     if args.mode == "sft":
         os.environ["WANDB_CONSOLE"] = "wrap" 
         wandb.init(project="chartrl", entity="chartrl")
@@ -477,8 +467,8 @@ if __name__ == "__main__":
 
     if args.mode == "grpo":
         # Setup and imports
-        os.environ["WANDB_CONSOLE"] = "wrap" 
-        wandb.init(project="chartrl", entity="chartrl")
+        # os.environ["WANDB_CONSOLE"] = "wrap" 
+        # wandb.init(project="chartrl", entity="chartrl")
 
         from trl import (GRPOConfig, GRPOTrainer, get_peft_config)
         from grpo_utils import format_reward,\
@@ -532,7 +522,7 @@ if __name__ == "__main__":
         custom = True
 
         if custom == True:
-            grpo_dataset_path = "/grpo-custom-dataset-no-figqa-with-type-4"
+            grpo_dataset_path = "/grpo-custom-dataset-large-"+str(seed)
             if os.path.exists(str(cache_dir+grpo_dataset_path)):
                 import json
                 from datasets import load_from_disk
@@ -544,6 +534,8 @@ if __name__ == "__main__":
                 all_datasets = []
                 dataset = ChartDataset("chartqa-src", processor=processor, blocks=blocks)
                 train_dataset = dataset.load_chart_dataset(split = "train")
+                # Only hard examples!
+                train_dataset = train_dataset.filter(lambda example: example["human_or_machine"] == 0)
                 all_datasets.append(train_dataset)
                 dataset = ChartDataset("figqa", processor=processor, blocks=blocks)
                 train_dataset = dataset.load_chart_dataset(split = "train")
@@ -571,7 +563,14 @@ if __name__ == "__main__":
                     example["label"]  = example["answer"] if is_none_label else example["label"]
                     return example
 
-                all_datasets = [dst.shuffle(seed=seed).select(range(1000)) for dst in all_datasets]
+                select_all_datasets = []
+                for i in range(len(all_datasets)):
+                    if i==0:
+                        select_all_datasets.append(all_datasets[i].shuffle(seed=seed))
+                    else:
+                        select_all_datasets.append(all_datasets[i].shuffle(seed=seed).select(range(2000)))
+                all_datasets = select_all_datasets
+                # all_datasets = [dst.shuffle(seed=seed).select(range(1000)) for dst in all_datasets]
                 all_datasets = all_datasets[:1]+ all_datasets[2:]
                 from datasets import concatenate_datasets
                 train_dataset = concatenate_datasets(all_datasets)
@@ -583,12 +582,11 @@ if __name__ == "__main__":
                 logging.info("Created Dataset and saved to disk")
                 grpo_train_dataset.save_to_disk(str(cache_dir+grpo_dataset_path))
                 exit(0)
-            # train_dataset = train_dataset.map(dataset.grpo_format_data,num_proc=32).shuffle(seed=seed).select(range(1680,5000))
-            
-            with open("./rationales_llm/rationales-custom-data.json", "r") as f:
+       
+
+            with open("./rationales_llm/rationales-large"+str(seed)+".json", "r") as f:
                 rationales = json.load(f)
-                rationales = rationales[:1000]+rationales[2000:]
-                logging.info("Loaded rationales+chart types from json")            
+                logging.info("Loaded rationales+chart types from json: "+str(len(rationales)))            
             
             errors = 0
 
@@ -611,27 +609,39 @@ if __name__ == "__main__":
                     try:
                         tab = json.loads(tab_string, parse_int=str, parse_float=str, parse_constant=str)
                     except:
-                        # print("Error in parsing", tab_string)
                         errors+=1
                         pass
+
                 except:
                     errors+=1
                     # print("Error in table loading", tab_string)
-                example["reasoning"], example["chart_type"], example ["table"]= rsn, typ, tab
+
+                print(idx)
+
+                # Very important check!!
+                if tab is not None:
+                    for i in range(len(tab["columns"])):
+                        tab["columns"][i] = str(tab["columns"][i])
+                    for i in range(len(tab["rows"])):
+                        for j in range(len(tab["rows"][i])):
+                            tab["rows"][i][j] = str(tab["rows"][i][j])
+
+
+                example["reasoning"], example["chart_type"], example["table"] = rsn, typ, tab
                 return example
             
-            grpo_train_dataset = train_dataset.map(_add_keys, with_indices=True, num_proc=1,load_from_cache_file=False)
-            print(errors)
 
+            grpo_train_dataset = train_dataset.map(_add_keys, with_indices=True, num_proc=1, load_from_cache_file=False)
+            print(errors)
             # Eval dataset is different from custom but to compare benchmarks we need this
             # grpo_dataset_path = "/grpo-chartqa-with-type-3-longer-thinking"
-            dataset = ChartDataset("chartqa-src", processor=processor, blocks=blocks)
-            eval_dataset = dataset.load_chart_dataset(split = "val")
+            dataset = ChartDataset("evochart", processor=processor, blocks=blocks)
+            eval_dataset = dataset.load_chart_dataset(split = "test")
             eval_dataset = eval_dataset.map(_grpo_format_data, num_proc=32,load_from_cache_file=False).select(range(200))
             grpo_eval_dataset = eval_dataset.map(_add_keys, with_indices=True, num_proc=32, load_from_cache_file=False)
 
             logging.info("Loaded model and datasets")
-            logging.info("First train sample:", grpo_train_dataset[-1])
+            logging.info("Last train sample:", grpo_train_dataset[-1])
             # logging.info("First train sample:", grpo_eval_dataset[-1])
             # breakpoint()
 
@@ -677,14 +687,15 @@ if __name__ == "__main__":
         training_args = GRPOConfig(
         # output_dir=args.vlm_name+"grpo-answer-think-preappend",  # Directory to save the model
         # output_dir="full-chartqa-vanilla",  # Directory to save the model
-        # output_dir = "grpo-start-ckpts/"+args.vlm_name+"grpo-f-a-l-gt-tab-custom-set",  # Directory to save the model
+        # output_dir = "grpo-start-ckpts/"+args.vlm_name+"-prm-"+str(seed),  # Directory to save the model
+        output_dir = "grpo-start-ckpts/"+args.vlm_name+"-prm-large-train-"+str(seed),  # Directory to save the model
         # output_dir = "grpo-test/from-sft-"+args.vlm_name+"-format-accuracy-length-longer-1000samp",  # Directory to save the model
         # output_dir = "test-lim-data",
-        output_dir = "prm",
+        # output_dir = "prm",
         bf16=True,
         remove_unused_columns = False,
         per_device_train_batch_size=2,
-        num_train_epochs=2,
+        num_train_epochs=4,
         logging_steps=50,
         max_prompt_length = 4096,
         eval_strategy="steps",
@@ -699,12 +710,9 @@ if __name__ == "__main__":
             model=model,
             args=training_args,
             reward_funcs=[format_reward, accuracy_reward, length_think_reward, num_token_reward, chart_type_reward, table_style_reward, process_style_reward],
-            # reward_funcs=[format_reward, accuracy_reward, length_think_reward], # vanilla
-            # reward_funcs=[format_reward, accuracy_reward, length_think_reward, num_token_reward], # vanilla
             train_dataset=grpo_train_dataset,
             eval_dataset=grpo_eval_dataset,  
             processing_class=processor,
-            # peft_config=grpo_peft_config, # No PEFT for now
         )
         
 

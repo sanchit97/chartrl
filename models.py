@@ -72,11 +72,10 @@ def load_vlm_model(model_type, mode = "eval"):
     if model_type == "qwen-2b":
         # device map = "auto" gives wrong device error on qwen2vl-2b #TODO
         processor = Qwen2VLProcessor.from_pretrained("Qwen/Qwen2-VL-2B-Instruct", trust_remote_code=True, cache_dir = cache_dir, padding_side="left", use_fast=True)
-        # model = AutoModelForImageTextToText.from_pretrained("Qwen/Qwen2-VL-2B-Instruct", device_map={"": 0}, cache_dir = cache_dir, attn_implementation = "flash_attention_2", torch_dtype=torch.bfloat16)
-        # model = Qwen2VLForConditionalGeneration.from_pretrained("Qwen/Qwen2-VL-2B-Instruct", torch_dtype="auto", device_map="auto",revision='main', attn_implementation = "flash_attention_2", trust_remote_code=True, cache_dir = cache_dir)
-        # model = Qwen2VLForConditionalGeneration.from_pretrained("Qwen/Qwen2-VL-2B-Instruct", torch_dtype="auto",revision='main', device_map=None, trust_remote_code=True, cache_dir = cache_dir)
-        model = Qwen2VLForConditionalGeneration.from_pretrained("Qwen/Qwen2-VL-2B-Instruct", torch_dtype="auto",revision='main', device_map=None, trust_remote_code=True, cache_dir = cache_dir, attn_implementation = "flash_attention_2")
-
+        if mode == "grpo":
+            model = Qwen2VLForConditionalGeneration.from_pretrained("Qwen/Qwen2-VL-2B-Instruct", torch_dtype="auto", device_map=None, revision='main', trust_remote_code=True, cache_dir = cache_dir)
+        else:
+            model = Qwen2VLForConditionalGeneration.from_pretrained("Qwen/Qwen2-VL-2B-Instruct", torch_dtype="auto", device_map="auto",revision='main', attn_implementation = "flash_attention_2", trust_remote_code=True, cache_dir = cache_dir)
 
     if model_type == "qwen2-5-3b":
         processor = Qwen2_5_VLProcessor.from_pretrained("Qwen/Qwen2.5-VL-3B-Instruct", padding_side="left", trust_remote_code=True, cache_dir = cache_dir)
@@ -103,27 +102,14 @@ def load_vlm_model(model_type, mode = "eval"):
     if model_type == "qwen2-5-7b":
         processor = Qwen2_5_VLProcessor.from_pretrained("Qwen/Qwen2.5-VL-7B-Instruct", padding_side="left", trust_remote_code=True, cache_dir = cache_dir)
         if mode == "grpo":
-            model = Qwen2_5_VLForConditionalGeneration.from_pretrained("Qwen/Qwen2.5-VL-7B-Instruct", torch_dtype="auto", trust_remote_code=True, cache_dir = cache_dir)
+            model = Qwen2_5_VLForConditionalGeneration.from_pretrained("Qwen/Qwen2.5-VL-7B-Instruct", torch_dtype="auto", device_map=None, revision='main', trust_remote_code=True, cache_dir = cache_dir)
         else:
-            model = Qwen2_5_VLForConditionalGeneration.from_pretrained("Qwen/Qwen2.5-VL-7B-Instruct", torch_dtype="auto", device_map="auto", attn_implementation = "flash_attention_2", trust_remote_code=True, cache_dir = cache_dir)
+            model = Qwen2_5_VLForConditionalGeneration.from_pretrained("Qwen/Qwen2.5-VL-7B-Instruct", torch_dtype="auto", device_map="auto",revision='main', attn_implementation = "flash_attention_2", trust_remote_code=True, cache_dir = cache_dir)
 
     if model_type == "internvl-8b":
         processor = AutoTokenizer.from_pretrained("OpenGVLab/InternVL2_5-8B", device_map="auto",cache_dir = cache_dir, trust_remote_code=True,torch_dtype=torch.bfloat16)
         model = AutoModel.from_pretrained("OpenGVLab/InternVL2_5-8B", device_map="auto",cache_dir = cache_dir, trust_remote_code=True,torch_dtype=torch.bfloat16)
 
-
-
-    # For big models (above 13-15b)
-    if model_type == "llava-1.6-13b":
-        processor = AutoProcessor.from_pretrained("llava-hf/llava-v1.6-vicuna-13b-hf")
-        model = AutoModelForImageTextToText.from_pretrained("llava-hf/llava-v1.6-vicuna-13b-hf", device_map="auto",cache_dir = cache_dir)
-
-
-    # For SOTA models (very big)
-    if model_type == "internvl-26b":
-        processor = AutoProcessor.from_pretrained("OpenGVLab/InternVL2_5-26B", device_map="auto",cache_dir = cache_dir, trust_remote_code=True)
-        model = AutoModel.from_pretrained("OpenGVLab/InternVL2_5-26B", device_map="auto",cache_dir = cache_dir, trust_remote_code=True)
-    
 
 
     # Chart specific models

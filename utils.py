@@ -414,6 +414,7 @@ def resize_fit(img):
         MIN_PIXELS = 480 * 28 * 28            # 1 003 520
         # MAX_PIXELS = 16384 * 28 * 28           # 12 843 776
         MAX_PIXELS = 480 * 28 * 28           # 12 843 776
+        # MAX_PIXELS = 960 * 28 * 28           # 12 843 776
 
         img = img.convert("RGB")
         w, h = img.size
