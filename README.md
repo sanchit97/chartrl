@@ -1,6 +1,6 @@
 # ChartRL: Improving Chart understanding in VLMs 
 
-Repo for RL post-training on Chart data. We present a small 3 billion chart understanding model which outputs answers AND rationales with no fine-tuning or distilling reasoning traces from larger frontier LLMs. Currently the models are based on Qwen2.5VL (3 billion).
+Repo for RL post-training on Chart data. We present a small 3 billion chart understanding model which outputs answers AND rationales. Currently the model is based on Qwen2.5VL (3 billion).
 
 The design hinges on training VLMs using GRPO with verifiable rewards.
 The training data is sampled from train sets of - ChartQA, PlotQA, and ChartFC (in-domain).
