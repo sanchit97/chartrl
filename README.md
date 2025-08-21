@@ -1,6 +1,6 @@
 # ChartRL: Improving Chart understanding in VLMs 
 
-Repo for RL post-training on Chart data. We present a small 3 billion chart understanding model which outputs answers AND rationales with no fine-tuning or distilling reasoning traces from larger frontier LLMs. Currently the models are based on Qwen2.5VL-3billion.
+Repo for RL post-training on Chart data. We present a small 3 billion chart understanding model which outputs answers AND rationales with no fine-tuning or distilling reasoning traces from larger frontier LLMs. Currently the models are based on Qwen2.5VL (3 billion).
 
 The design hinges on training VLMs using GRPO with verifiable rewards.
 The training data is sampled from train sets of - ChartQA, PlotQA, FigQA and ChartFC.
@@ -12,36 +12,23 @@ Huge thanks to the team at Morgan Stanley for their support.
 
 ## Main Benchmark Results
 
-| Model (≈ 2‑3 B params)     | Strategy        | ChartQA&nbsp;(RA) | Aug&nbsp;(RA) | Human&nbsp;(RA) | Notes                     |
-|----------------------------|-----------------|------------------|---------------|-----------------|---------------------------|
-| Qwen‑2.5 VL‑Instruct       | Direct          | 82.00            | 92.64         | 71.36           | No rationales             |
-| Qwen‑2.5 VL‑Instruct – SFT | Direct          | —                | —             | —               | No rationales             |
-| Qwen‑2.5 VL‑Instruct       | CoT             | 73.12            | 93.44         | 52.80           | Very bad rationales       |
-| Qwen‑2.5 VL‑Instruct – SFT - rationales from QwenVL72b | CoT | 85.96  | 93.60  | 78.32              | **Solid rationales**             |
-| **Qwen‑2.5 VL‑Instruct (Ours - naive)**   | **GRPO**        | **82.12**        | **93.28**     | **70.96**       | **Solid rationales**      | \
-| **Qwen‑2.5 VL‑Instruct (Ours)**   | **GRPO**        | **82.92**        | **94.40**     | **72.16**       | **Solid rationales**      | \
-| ChartInstruct-Flan-T5-XL       | Direct          | 72.00            | 93.84         | 50.16           | No rationales  
-| ChartAssistant-S (13b)  | CoT        | 79.9        | 93.90     | 65.90       | **Solid rationales**      |
-| ChartGemma   | CoT        | 80.16        | 90.80     | 69.52       | **Solid rationales**      |
+| Approach                           | Exp? | ChartQA | PlotQA | ChartFC | EvoChart | ChartQAPro | 
+|------------------------------------|------|---------|--------|---------|----------|------------|
+| **Direct Prompting**               |      |         |        |         |          |            |
+| Q2.5VL-Ins                         | ✗    | 82.0    | 80.5   | 74.4    | 48.72    | 25.7       |
+| **Explainable Models - with Rationales** |      |         |        |         |          |      |            
+| Q2.5VL-Ins (CoT)                   | ✔    | 73.12   | 52.72  | 69.20   | 29.6     | 15.80      | 
+| ChartGemma                         | ✔    | 76.44   | 33.28  | 70.33   | 36.96    | 10.93      | 
+| **Fine-tuned Models - with Rationales** |      |         |        |         |          |       | 
+| Q2.5VL-SFT                         | ✔    | 83.08   | 74.18  | 77.30   | 46.08    | 23.56      | 
+| Q2.5VL-DPO                         | ✔    | 75.42   | 53.86  | 70.1    | 34.8     | 15.95      | 
+| Q2.5VL-Ins (F+L+Tasks)             | ✔    | 81.8    | 76.24  | 63.85   | 51.68    | 27.66      | 
+| **Chart-RVR-3B (Ours)**            | ✔    | 84.56   | **78.68** | 77.62   | 53.36    | 28.38   |  
+| **Data Curated Fine-tuned Models - with Rationales** |      |         |        |         |          |            |            |
+| Q2.5VL-SFT-Hard                    | ✔    | 84.28   | 75.54  | 77.90   | 49.36    | 23.20      | 
+| **Chart-RVR-3B-Hard (Ours)**       | ✔    | **85.76** | 77.9   | **80.07** | **54.24** | **28.64** | 
 
 
-
-Our approach boosts performance on human annotated splits of ChartQA 
-
-
-## Loss ablations for DPO (old work not relevant now)
-
-| Model          | Loss       | RA    |
-|----------------|------------|-------|
-| Qwen-2VL-Base  | –          | 71.48 |
-|                | Sigmoid    | 71.92 |
-|                | IPO        | 61.28 |
-|                | Sppo_hard  | 71.88 |
-|                | Hinge      | **72.04** |
-|                | Apo Zero   | **72.04** |
-
-
-![image info](./ablation-dpo-loss.png "Ablation DPO Loss")
 
 
 
