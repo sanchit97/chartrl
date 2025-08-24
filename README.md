@@ -9,7 +9,7 @@ The training data is sampled from train sets of - ChartQA, PlotQA, and ChartFC (
 Huge thanks to the team at Morgan Stanley for their support!
 
 
-Find our Chart-RVR-3B model on [Huggingface](https://huggingface.co/sanchit97/chart-rvr-3b).
+Find our Chart-RVR-3B models and associated datasets on [Huggingface](https://huggingface.co/collections/sanchit97/chart-rvr-68aaac32a2745bc653f581a1).
 
 
 
