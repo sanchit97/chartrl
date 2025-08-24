@@ -32,6 +32,33 @@ Find our Chart-RVR-3B model on [Huggingface](https://huggingface.co/sanchit97/ch
 | **Chart-RVR-3B-Hard (Ours)**       | ✔    | **85.76** | 77.9   | **80.07** | **54.24** | **28.64** | 
 
 
+## Running Evals
+
+Run inference on ChartQA with Chain-of-Thought:
+```python main.py --mode eval --vlm-name qwen2-5-3b --dataset-name chartqa-src --cot True```
+
+Run inference on ChartQA with GRPO trained models:
+```python main.py --mode eval --vlm-name qwen2-5-3b --dataset-name chartqa-src --cot True --grpo-lora True```
+
+Run inference on ChartQA with SFT trained models:
+```python main.py --mode eval --vlm-name qwen2-5-3b --dataset-name chartqa-src --cot True --sft-lora True```
+
+Ensure path to models correspond to checkpoints from [Chart-RVR](https://huggingface.co/sanchit97/chart-rvr-3b) or [Chart-RVR-Hard](https://huggingface.co/sanchit97/chart-rvr-hard-3b)
 
 
+To ease computation, we have provided scripts which can directly be executed on SLURM in ```./eval-scripts```
+For instance to run GRPO on all datasets, use: ```sbatch ./eval-scripts/grpo_all_eval.sh```. This runs evaluation on all datasets and stores it in ```./logs```.
 
+## Training Models
+
+### SFT
+We utilize the great work [here](https://github.com/2U1/Qwen2-VL-Finetune) to fine-tune models.
+
+
+### Chart-RVR (GRPO-based) 
+To directly run training, we recommend first double checking TRL version. Next double check the ```num_processes``` in ```./deepspeed_zero3.yaml``` is set to 4 (recommended). For any other combination, there might be OOM errors with default completions, prompt size, etc. 
+
+Then, simply run on the SLURM cluster ```sbatch grpo.sh```. For running directly on local GPUs, run:
+```accelerate launch --config_file=deepspeed_zero3.yaml main.py --mode grpo --vlm-name qwen2-5-3b --dataset-name chartqa-src```
+
+Note: The datset name is only placeholder for the eval-script. It is mandatory to run the dataset generation script first.
