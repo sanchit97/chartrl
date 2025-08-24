@@ -6,7 +6,7 @@ import pickle
 import random
 import argparse
 import json
-
+import io
 os.environ["FLASH_ATTENTION_2_ENABLED"] = "1"
 
 import torch
@@ -58,6 +58,7 @@ def parse_args():
     parser.add_argument('--seed', type=int, default=2025, help='Random seed')
     parser.add_argument('--cot', type=bool, default=False, help='To use CoT or not')
     parser.add_argument('--icl', type=bool, default=False, help='To use ICL examples for inference or not')
+    parser.add_argument('--hard', type=bool, default=False, help='To use hard example trained models for inference')
 
     return parser.parse_args()
 
@@ -159,7 +160,7 @@ if __name__ == "__main__":
 
     elif args.dataset_name == "chartbench":
         dataset = ChartDataset("chartbench", processor=processor)
-        test_dataset = dataset.load_chart_dataset(split = "test")
+        test_dataset = dataset.load_chart_dataset(split = "test").shuffle(seed=seed).select(range(5000))
 
     elif args.dataset_name == "chartx":
         dataset = ChartDataset("chartx", processor=processor)
@@ -171,7 +172,8 @@ if __name__ == "__main__":
         logging.info("Blocks:", blocks)
         # SFT adapter
         if args.sft_lora:
-            sft_model_path = "/mnt/home/sanchit/Qwen2-VL-Finetune/output/sft-"+str(seed)+"/"
+            # sft_model_path = "/mnt/home/sanchit/Qwen2-VL-Finetune/output/sft-"+str(seed)+"/"
+            sft_model_path = "/mnt/home/sanchit/Qwen2-VL-Finetune/output/q2-large-sft-"+str(seed)+"/"
             from transformers import  Qwen2_5_VLForConditionalGeneration, Qwen2_5_VLProcessor
             model = Qwen2_5_VLForConditionalGeneration.from_pretrained(sft_model_path, device_map="auto", local_files_only=True)
             model.eval()
@@ -207,13 +209,12 @@ if __name__ == "__main__":
         
         if args.grpo_lora:
             from transformers import  Qwen2_5_VLForConditionalGeneration, Qwen2_5_VLProcessor
-            # grpo_path = "/mnt/home/sanchit/rl-chart/grpo-start-ckpts/qwen2-5-3bgrpo-f-a-l-gt-tab-v0/checkpoint-8000/"
-            # grpo_path = "/mnt/home/sanchit/rl-chart/grpo-start-ckpts//mnt/home/sanchit/rl-chart/grpo-start-ckpts/qwen2-5-7bgrpo-f-a-l-full-model-cot-v3-all-data/checkpoint-2500/"
-            # grpo_path = "/mnt/home/sanchit/rl-chart/grpo-start-ckpts/qwen2-5-3bgrpo-f-a-l-gt-tab-custom-set/checkpoint-500/"
-            # grpo_path = "/mnt/home/sanchit/rl-chart/test-lim-data/checkpoint-1500/"
-            # grpo_path = "/mnt/home/sanchit/rl-chart/prm/checkpoint-2500/"
-            grpo_path = "/mnt/home/sanchit/rl-chart/grpo-start-ckpts/qwen2-5-3b-prm-2026/checkpoint-4000/"
-
+            if not args.hard:
+                grpo_path = "/mnt/home/sanchit/rl-chart/grpo-start-ckpts/qwen2-5-3b-prm-"+str(seed)+"/checkpoint-4000/"
+            else:
+                grpo_path = "/mnt/home/sanchit/rl-chart/grpo-start-ckpts/qwen2-5-3b-prm-large-train-v2-"+str(seed)+"/checkpoint-22000/"
+            
+            grpo_path = "/mnt/home/sanchit/rl-chart/grpo-start-ckpts/qwen2-5-3b-prm-large-train-v2-"+str(seed)+"/checkpoint-22000/"
             model = Qwen2_5_VLForConditionalGeneration.from_pretrained(grpo_path, device_map="auto", local_files_only=True)
             model.eval()
 
@@ -233,7 +234,7 @@ if __name__ == "__main__":
         logging.info("Using CoT: {}".format(args.cot))
 
 
-        loader = dataset.create_loader(test_dataset, bsz=32)
+        loader = dataset.create_loader(test_dataset, bsz=1)
 
         if args.icl:
             path = "./icl-examples/"+args.dataset_name+"-icl_samples.pkl"
@@ -244,7 +245,8 @@ if __name__ == "__main__":
                 icl_samples = select_icl_samples(train_dataset, k=5)
                 logging.info("Selected ICL examples")
                 pickle.dump(icl_samples, open(path, 'wb'))
-
+        
+        idx = 0
         for batch in tqdm.tqdm(loader):
             if args.icl:
                 pred, rationale = get_vlm_output(model, processor, batch[0], batch[1], args.cot, icl_samples, blocks)
@@ -261,9 +263,10 @@ if __name__ == "__main__":
                 print(batch[2][0])
                 print("#####")
             else:
-                print(pred)
-                print(batch[2])
-                print(rationale)
+                # print(pred)
+                # print(batch[2])
+                print(rationale[0])
+                print("#####")
             # breakpoint()
             # TODO: Understand why this takes so long (and optimize)
             bleu_score = 0
@@ -299,15 +302,19 @@ if __name__ == "__main__":
 
             total += len(batch[0])
 
-            print("EM: ", em_correct/total)
-            print("Relaxed Accuracy: ", ra_correct/total)
+            # print("EM: ", em_correct/total)
+            # print("Relaxed Accuracy: ", ra_correct/total)
             
-            print("Aug Accuracy:", aug_correct/aug_total ) if aug_total>0 else print("Aug Accuracy: No aug samples")
-            print("Human Accuracy:", human_correct/human_total ) if human_total>0 else print("Human Accuracy: No human samples")
-            print("Average Accuracy:", 0.5*(aug_correct/aug_total + human_correct/human_total)) if aug_total>0 and human_total>0 else print("Average Accuracy: NA")
+            # print("Aug Accuracy:", aug_correct/aug_total ) if aug_total>0 else print("Aug Accuracy: No aug samples")
+            # print("Human Accuracy:", human_correct/human_total ) if human_total>0 else print("Human Accuracy: No human samples")
+            # print("Average Accuracy:", 0.5*(aug_correct/aug_total + human_correct/human_total)) if aug_total>0 and human_total>0 else print("Average Accuracy: NA")
 
-
+            # for img in batch[0]:
+            #     img.save("./junkimage/"+str(idx)+".png")
+            #     idx+=1
+            # breakpoint()
             # print("BLEU Score: ", tot_bleuscore/total)
+            # print(batch)
         
     if args.mode == "sft":
         os.environ["WANDB_CONSOLE"] = "wrap" 
@@ -467,8 +474,8 @@ if __name__ == "__main__":
 
     if args.mode == "grpo":
         # Setup and imports
-        # os.environ["WANDB_CONSOLE"] = "wrap" 
-        # wandb.init(project="chartrl", entity="chartrl")
+        os.environ["WANDB_CONSOLE"] = "wrap" 
+        wandb.init(project="chartrl", entity="chartrl")
 
         from trl import (GRPOConfig, GRPOTrainer, get_peft_config)
         from grpo_utils import format_reward,\
@@ -584,7 +591,7 @@ if __name__ == "__main__":
                 exit(0)
        
 
-            with open("./rationales_llm/rationales-large"+str(seed)+".json", "r") as f:
+            with open("./rationales_llm/rationales-large-"+str(seed)+".json", "r") as f:
                 rationales = json.load(f)
                 logging.info("Loaded rationales+chart types from json: "+str(len(rationales)))            
             
@@ -688,7 +695,7 @@ if __name__ == "__main__":
         # output_dir=args.vlm_name+"grpo-answer-think-preappend",  # Directory to save the model
         # output_dir="full-chartqa-vanilla",  # Directory to save the model
         # output_dir = "grpo-start-ckpts/"+args.vlm_name+"-prm-"+str(seed),  # Directory to save the model
-        output_dir = "grpo-start-ckpts/"+args.vlm_name+"-prm-large-train-"+str(seed),  # Directory to save the model
+        output_dir = "grpo-start-ckpts/"+args.vlm_name+"-prm-large-train-v2-"+str(seed),  # Directory to save the model
         # output_dir = "grpo-test/from-sft-"+args.vlm_name+"-format-accuracy-length-longer-1000samp",  # Directory to save the model
         # output_dir = "test-lim-data",
         # output_dir = "prm",

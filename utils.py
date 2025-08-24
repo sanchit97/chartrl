@@ -19,9 +19,6 @@ from qwen_vl_utils import process_vision_info
 from internvl_utils import get_conv_template, load_image
 
 
-MIN_PIXELS = 1280 * 28 * 28            # 1 003 520
-MAX_PIXELS = 16384 * 28 * 28           # 12 843 776
-
 
 def get_vlm_output(model, processor, image, query, cot = False, icl_samples=None, model_device = None, blocks=2):
     max_new_tokens = 768 if cot else 100 # To speed up inference when not cot
@@ -164,7 +161,7 @@ def get_vlm_output(model, processor, image, query, cot = False, icl_samples=None
         )
 
         # breakpoint()
-        print("raw:", out_text)
+        # print("raw:", out_text)
         if cot: 
             pred_text = [out.split("<answer>")[-1].strip().split("</answer>")[0].strip() for out in out_text]
             rationale = [out.split("<think>")[-1].strip().split("</think>")[0].strip("\n") for out in out_text]
@@ -411,17 +408,17 @@ def select_icl_samples(train_dataset, k=5):
 
 # For OOM and efficiency - it is possible that some results change slightly from reported numbers
 def resize_fit(img):
-        MIN_PIXELS = 480 * 28 * 28            # 1 003 520
-        # MAX_PIXELS = 16384 * 28 * 28           # 12 843 776
-        MAX_PIXELS = 480 * 28 * 28           # 12 843 776
-        # MAX_PIXELS = 960 * 28 * 28           # 12 843 776
+    MIN_PIXELS = 480 * 28 * 28            # 1 003 520
+    # MAX_PIXELS = 16384 * 28 * 28           # 12 843 776
+    MAX_PIXELS = 480 * 28 * 28           # 12 843 776
+    # MAX_PIXELS = 960 * 28 * 28           # 12 843 776
 
-        img = img.convert("RGB")
-        w, h = img.size
-        p = w * h
-        if MIN_PIXELS <= p <= MAX_PIXELS:
-            return img
-        tgt_p  = max(min(p, MAX_PIXELS), MIN_PIXELS)
-        scale  = (tgt_p / p) ** 0.5
-        new_wh = (int(w * scale), int(h * scale))
-        return img.resize(new_wh, Image.BICUBIC)
+    img = img.convert("RGB")
+    w, h = img.size
+    p = w * h
+    if MIN_PIXELS <= p <= MAX_PIXELS:
+        return img
+    tgt_p  = max(min(p, MAX_PIXELS), MIN_PIXELS)
+    scale  = (tgt_p / p) ** 0.5
+    new_wh = (int(w * scale), int(h * scale))
+    return img.resize(new_wh, Image.BICUBIC)

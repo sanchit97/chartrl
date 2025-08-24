@@ -6,6 +6,8 @@ import json
 from sentence_transformers import SentenceTransformer
 import torch.nn.functional as F
 
+import matplotlib.pyplot as plt
+
 
 text_reward_model = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2").cuda().eval()
 
@@ -133,7 +135,9 @@ def num_token_reward(completions, **kwargs):
     rewards = []
     for completion in completions:
         reward = 0.0
-        reward = int(all(len(p.findall(completion)) == 1 for p in _PATTERNS))
+        # reward = int(all(len(p.findall(completion)) == 1 for p in _PATTERNS))
+        reward = 2*int(all(len(p.findall(completion)) == 1 for p in _PATTERNS))
+
         rewards.append(reward)
 
 
@@ -201,6 +205,11 @@ def length_think_reward(completions, **kwargs):
         if len(rationale) > 250:
             reward -=  1.0
 
+        if len(rationale) > 70:
+            reward +=  1.0
+        if len(rationale) > 150:
+            reward -=  1.0
+
         # text_rationale = completion.split("</table>")[-1].strip().split("<answer>")[0].strip()
         # if len(text_rationale) > 100:
         #     reward +=  1.0
@@ -247,13 +256,15 @@ def process_style_reward(completions, reasoning, **kwargs):
         gt_steps = reason.split("<step-")
         reward = 0.0
 
-        if len(pred_steps) == len(gt_steps):
-            reward += 0.5
-            for st, gst in zip(pred_steps[:len(gt_steps)], gt_steps):
-                if text_sim(st, gst)> 0.8:
-                    reward += 0.5
-        else: 
-            reward += text_sim(steps, reason)
+        # if len(pred_steps) == len(gt_steps):
+        #     reward += 0.5
+        #     for st, gst in zip(pred_steps[:len(gt_steps)], gt_steps):
+        #         if text_sim(st, gst)> 0.8:
+        #             reward += 0.5
+        # else: 
+        #     reward += text_sim(steps, reason)
+
+        reward += text_sim(steps, reason)
         
         rewards.append(reward)
 
@@ -269,3 +280,72 @@ def text_sim(pr, gt):
     gt_emb = text_reward_model.encode(gt, convert_to_tensor=True, device='cuda')
     cos = F.cosine_similarity(p_emb, gt_emb, dim=-1)
     return cos.max(dim=0).values.mean().item()
+
+
+# def chart_consistency_reward(completions, prompts, chart_type, **kwargs):
+#     rewards = []
+#     for completion, pr, c_type in zip(completions,prompts, chart_type):
+#         # 1. extract table + answer
+#         try:
+#             # print("Completion: ", completion)
+#             if "<answer>" not in completion:
+#                 gold_parsed = []
+#             elif "<think>" not in completion:
+#                 gold_parsed = []
+#             else:
+#                 gold_parsed = completion.split("<answer>")[-1].strip().split("</answer>")[0].strip()
+#                 gold_parsed = gold_parsed.rstrip('.') if gold_parsed.endswith('.') else gold_parsed
+#             # print("GOLD PARSED:", gold_parsed)
+#         except Exception:
+#             gold_parsed = []
+
+#         if len(gold_parsed) == 0:
+#             reward = 0.0     
+
+#         try:
+#             sol = float(sol)  # to avoid zero division errors
+#             gold_parsed = float(gold_parsed)
+#         except Exception as e:
+#             pass
+        
+
+#         tab_struct = completion.split("<table>")[-1].strip().split("</table>")[0].strip()
+
+#         if "```json" in tab_struct:
+#                 block = tab_struct.split("```json")[-1].split("```")[0].strip()
+#         else:
+#             block = tab_struct.replace('\n', '').strip("\n").strip()
+
+#         # print(block)
+#         try:
+#             jj = json.loads(block, parse_int=str, parse_float=str, parse_constant=str)
+#         except:
+#             print("Failed to parse JSON")
+
+#         table_json = jj
+
+#         # 2. quick render (bar chart example)
+#         fig, ax = plt.subplots(figsize=(2,2))
+#         ax.bar(table_json["columns"], [r[1] for r in table_json["rows"]])
+#         ax.axis('off')
+#         buf = io.BytesIO(); fig.savefig(buf, format='png'); plt.close(fig)
+
+#         try:
+#             pred_type = completion.split("<type>")[-1].strip().split("</type>")[0].strip().lower()
+#             if pred_type == c_type.lower():
+#                 reward = 1.0
+#         except Exception as e:
+#             reward = 0.0
+        
+#         # 3. re-ask
+#         checker_out = checker_pipe(image=buf.getvalue(),
+#                                    question=question)[0]["answer"]
+        
+#         # 4. compare
+#         try:
+#             a, â = float(ans_pred), float(re.findall(r"[-+]?\d*\.?\d+", checker_out)[0])
+#             reward = max(0, 1-abs(a-â)/abs(a))
+#         except:
+#             reward = float(ans_pred.lower() == checker_out.lower())
+#         rewards.append(reward)
+#     return rewards

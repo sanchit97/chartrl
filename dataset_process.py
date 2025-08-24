@@ -197,8 +197,90 @@ class ChartDataset:
             data = dataset[split]
             return data
 
+        if self.dataset_name == "chartllama":
+            if os.path.exists(cache_dir+"/chartllama"):
+                dataset = load_from_disk(str(cache_dir+"/chartllama"))
+            else:
+                root = "./chartllama/"
+                folds = ["candlestick_chart","funnel_chart","gantt_chart","heatmap_chart","polar_chart","scatter_chart"]
+                all_data = []
+                for fold in folds:
+                    print(fold)
+                    with open(root+fold+"_100examples_simplified_qa.json", 'r') as f:
+                        data = json.load(f)
+                    data = [
+                        {
+                            "image": root+d['image'],
+                            "query": d["conversations"][0]["value"].split("<image>")[-1].strip(),
+                            "label": d["conversations"][1]["value"].strip(),
+                            "type": fold,
+                        }
+                        for d in data
+                    ]
+                    all_data.extend(data)
+
+                test_ds = Dataset.from_list(all_data).cast_column("image", Image())
+                chartllama = DatasetDict({
+                                "test": test_ds,
+                            })
+
+                chartllama.save_to_disk(str(cache_dir+"/chartllama/"))
+                dataset = load_from_disk(str(cache_dir+"/chartllama"))
+
+            data = dataset[split]
+            return data
         
-        elif self.dataset_name == "figqa":
+        if self.dataset_name == "chartbench":
+            if os.path.exists(cache_dir+"/chartbench"):
+                dataset = load_from_disk(str(cache_dir+"/chartbench"))
+            else:
+                root = "./chartbench/"
+                with open(root+"test.jsonl", 'r') as f:
+                    json_data = [json.loads(l) for l in f if l.strip()]
+
+                # folds = ["area", "bar",  "box",  "combination",  "line",  "node_link",  "pie",   "radar",  "scatter"]
+                # breakpoint()
+
+                data = []
+                skip = 0
+                for d in json_data:
+                    conversation = d["conversation"]
+                    if len(conversation) == 2:
+                        data.append({
+                            "image": root+d['image'][2:],
+                            "query": d["conversation"][0]["query"].strip()+" For binary questions, answer in yes/no.",
+                            "label": d["conversation"][0]["label"].strip(),
+                            "type": d["type"]["chart"],
+                        })
+                        data.append({
+                            "image": root+d['image'][2:],
+                            "query": d["conversation"][1]["query"].strip()+" For binary questions, answer in yes/no.",
+                            "label": d["conversation"][1]["label"].strip(),
+                            "type": d["type"]["chart"],
+                        })
+                    else:
+                        # if conversation is not of length 2, we skip it
+                        # print("Skipping conversation of length: ", len(conversation))
+                        skip+=1
+                        data.append({
+                            "image": root+d['image'][2:],
+                            "query": d["conversation"][0]["query"].strip()+" For binary questions, answer in yes/no.",
+                            "label": d["conversation"][0]["label"].strip(),
+                            "type": d["type"]["chart"],
+                        })
+                print("Skipped conversations: ", skip)    
+                test_ds = Dataset.from_list(data).cast_column("image", Image())
+                chartbench = DatasetDict({
+                                "test": test_ds,
+                            })
+
+                chartbench.save_to_disk(str(cache_dir+"/chartbench/"))
+                dataset = load_from_disk(str(cache_dir+"/chartbench"))
+
+            data = dataset[split]
+            return data
+
+        if self.dataset_name == "figqa":
             if os.path.exists(cache_dir+"/figqa_dataset"):
                 figqa = load_from_disk(str(cache_dir+"/figqa_dataset"))
             
@@ -235,6 +317,33 @@ class ChartDataset:
 
             return figqa[split]
 
+        if self.dataset_name == "chartx":
+            if os.path.exists(cache_dir+"/chartx"):
+                dataset = load_from_disk(str(cache_dir+"/chartx"))
+            else:
+                root = "./chartx/"
+                with open(root+"ChartX_annotation_test.json", 'r') as f:
+                    data = json.load(f)
+                data = [
+                    {
+                        "image": root+"ChartX_png/"+d['img'][2:],
+                        "query": d["QA"]["input"].strip(),
+                        "label": d["QA"]["output"].strip(),
+                        "type": d["chart_type"].strip(),
+                    }
+                    for d in data
+                ]
+                test_ds = Dataset.from_list(data).cast_column("image", Image())
+                chartx = DatasetDict({
+                                "test": test_ds,
+                            })
+
+                chartx.save_to_disk(str(cache_dir+"/chartx/"))
+                dataset = load_from_disk(str(cache_dir+"/chartx"))
+
+            data = dataset[split]
+            return data
+
     def create_loader(self, data, bsz=1):
         if self.dataset_name == "chartqa" or self.dataset_name == "chartqa-src":
             dataloader = DataLoader(data, batch_size = bsz, collate_fn = self.collate_fn_chartqa)
@@ -246,7 +355,14 @@ class ChartDataset:
             dataloader = DataLoader(data, batch_size = bsz, collate_fn = self.collate_fn_chartfc)
         elif self.dataset_name == "evochart":
             dataloader = DataLoader(data, batch_size = bsz, collate_fn = self.collate_fn_evochart)
+        elif self.dataset_name == "chartllama":
+            dataloader = DataLoader(data, batch_size = bsz, collate_fn = self.collate_fn_chartllama)
+        elif self.dataset_name == "chartbench":
+            dataloader = DataLoader(data, batch_size = bsz, collate_fn = self.collate_fn_chartllama)
+        elif self.dataset_name == "chartx":
+            dataloader = DataLoader(data, batch_size = bsz, collate_fn = self.collate_fn_chartllama)
         return dataloader
+    
 
     def collate_fn_chartqa(self, batch):
         # for quick evals
@@ -293,6 +409,21 @@ class ChartDataset:
 
         return image_batch, query_batch, label_batch, machine_human_batch
 
+
+    def collate_fn_chartllama(self, batch):
+            # for quick evals
+            image_batch = []
+            query_batch = []
+            label_batch = []
+            chart_type_batch = []
+            
+            for idx in range(len(batch)):
+                image_batch.append(batch[idx]['image'])
+                query_batch.append(batch[idx]['query'])
+                label_batch.append(batch[idx]['label'])
+                chart_type_batch.append(batch[idx]['type'])
+
+            return image_batch, query_batch, label_batch, chart_type_batch
 
 
     def collate_fn_chartqapro(self, batch):
@@ -364,7 +495,7 @@ class ChartDataset:
 
         batch["labels"] = labels  # Add labels to the batch
         # logging.info("Time to process batch: ",time.time()   - st)  # Log the time taken for processing
-        breakpoint()
+        # breakpoint()
         return batch  # Return the prepared batch
 
     def format_question(self, example):
@@ -535,32 +666,6 @@ class ChartDataset:
         # example["image"].thumbnail((max_size, max_size))
         return {"images": [example["image"]], "prompt": prompt, "chosen": chosen, "rejected": rejected}
 
-
-    # def grpo_format_data(self, example):
-    #     if self.blocks is None:
-    #         print("Blocks is None! Cant understand prompt structure!")
-    #         exit(0)
-        
-    #     SYSTEM_PROMPT = SYSTEM_PROMPT_TEMPLATES[self.blocks]
-    #     conversation = [
-    #         {"role": "system", "content": SYSTEM_PROMPT},
-    #         {
-    #             "role": "user",
-    #             "content": [
-    #                 {"type": "image"},
-    #                 {"type": "text", "text": example["query"]},
-    #             ],
-    #         },
-    #         # {"role": "assistant", "content": [{"type": "text", "text": "<think>"}]},
-    #     ]
-    #     prompt = self.processor.apply_chat_template(conversation, add_generation_prompt=True,truncation=False)
-    #     # prompt = self.processor.apply_chat_template(conversation, add_generation_prompt=False, continue_final_message=True,truncation=False)
-
-    #     return {
-    #         "prompt": prompt,
-    #         "image": self.resize_up(example["image"]),
-    #         # "image": example["image"],
-    #     }
     
     def resize_up(self, img):
         MIN_PIXELS = 320 * 28 * 28            # 1 003 520
